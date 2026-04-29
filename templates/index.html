@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Champion winrates — LoL Matchups{% endblock %}
+{% block body %}
+    <h1>Champion winrates</h1>
+
+    {% if error %}
+        <p class="empty">{{ error }}</p>
+    {% else %}
+    <form method="get">
+        <label>Position
+            <select name="position">
+                {% for p in positions %}
+                    <option value="{{ p }}" {% if p == position %}selected{% endif %}>{{ p }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>Patches
+            <select name="patches" multiple size="{{ available_patches|length }}">
+                {% for p in available_patches %}
+                    <option value="{{ p }}" {% if p in selected_patches %}selected{% endif %}>{{ p }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>Min games
+            <input type="number" name="min_games" value="{{ min_games }}" min="0">
+        </label>
+        <label>Sort by
+            <select name="sort">
+                <option value="winrate" {% if sort_by == 'winrate' %}selected{% endif %}>Winrate</option>
+                <option value="picks"   {% if sort_by == 'picks'   %}selected{% endif %}>Picks</option>
+                <option value="wins"    {% if sort_by == 'wins'    %}selected{% endif %}>Wins</option>
+                <option value="bans"    {% if sort_by == 'bans'    %}selected{% endif %}>Bans</option>
+                <option value="name"    {% if sort_by == 'name'    %}selected{% endif %}>Name</option>
+            </select>
+        </label>
+        <button type="submit">Apply</button>
+    </form>
+
+    <p class="meta">
+        {{ stats|length }} champions ≥ {{ min_games }} games · {{ total_matches }} matches in scope
+        <span class="hint">(patches: {{ selected_patches|join(', ') }})</span>
+    </p>
+
+    {% if stats %}
+    <table>
+        <thead>
+            <tr>
+                <th>Champion</th>
+                <th class="num">Winrate</th>
+                <th class="num">Picks</th>
+                <th class="num">W / L</th>
+                <th class="num">Bans</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in stats %}
+            <tr>
+                <td class="champ">
+                    <a href="{{ url_for('champion_matchups', champion_name=s.champion_name, position=position) }}">
+                        <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ s.champion_name }}.png"
+                             alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+                    </a>
+                    <a href="{{ url_for('champion_matchups', champion_name=s.champion_name, position=position) }}">{{ s.champion_name }}</a>
+                </td>
+                <td class="num winrate {% if s.winrate >= 0.52 %}good{% elif s.winrate <= 0.48 %}bad{% endif %}">
+                    {{ "%.1f"|format(s.winrate * 100) }}%
+                </td>
+                <td class="num">{{ s.picks }}</td>
+                <td class="num">{{ s.wins }} / {{ s.losses }}</td>
+                <td class="num">{{ s.bans }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty">No champions match these filters yet — try lowering "min games" or wait for the crawler.</p>
+    {% endif %}
+    {% endif %}
+{% endblock %}

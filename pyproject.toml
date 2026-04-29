@@ -1,0 +1,17 @@
+[project]
+name = "lol-matchups"
+version = "0.1.0"
+description = "League of Legends draft helper"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "flask>=3.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["config", "db", "riot_client", "crawler", "main", "app"]

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}{{ champion_name }} matchups — LoL Matchups{% endblock %}
+{% block body %}
+    <p class="nav"><a href="{{ url_for('index') }}">← all champions</a></p>
+
+    <h1>
+        <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champion_name }}.png"
+             alt="" onerror="this.style.visibility='hidden'">
+        {{ champion_name }}
+        {% if my_position %}<span style="color:#888;font-size:1rem;">— {{ my_position }}</span>{% endif %}
+        matchups
+    </h1>
+
+    {% if error %}
+        <p class="empty">{{ error }}</p>
+    {% else %}
+    <form method="get">
+        <label>{{ champion_name }} position
+            <select name="position">
+                <option value="">Any</option>
+                {% for p in positions %}
+                    <option value="{{ p }}" {% if p == my_position %}selected{% endif %}>{{ p }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>Patches
+            <select name="patches" multiple size="{{ available_patches|length }}">
+                {% for p in available_patches %}
+                    <option value="{{ p }}" {% if p in selected_patches %}selected{% endif %}>{{ p }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>Min games
+            <input type="number" name="min_games" value="{{ min_games }}" min="1">
+        </label>
+        <label>Sort by
+            <select name="sort">
+                <option value="winrate" {% if sort_by == 'winrate' %}selected{% endif %}>Winrate</option>
+                <option value="games"   {% if sort_by == 'games'   %}selected{% endif %}>Match count</option>
+            </select>
+        </label>
+        <button type="submit">Apply</button>
+    </form>
+
+    <p class="meta">
+        {{ total_matches }} games with {{ champion_name }}{% if my_position %} in {{ my_position }}{% endif %}
+        <span class="hint">(patches: {{ selected_patches|join(', ') }})</span>
+    </p>
+
+    {% if total_matches == 0 %}
+        <p class="empty">No games found for {{ champion_name }} with these filters.</p>
+    {% else %}
+        {% for pos in positions %}
+        <div class="matchup-section">
+            <div class="pos-label">{{ pos }}</div>
+            <div class="matchup-row">
+                {% if matchups[pos] %}
+                    {% for m in matchups[pos] %}
+                    <a class="matchup-card" href="{{ url_for('champion_matchups', champion_name=m.champion_name, position=my_position) }}">
+                        <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ m.champion_name }}.png"
+                             alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+                        <div class="wr {% if m.winrate >= 0.52 %}good{% elif m.winrate <= 0.48 %}bad{% endif %}">
+                            {{ "%.1f"|format(m.winrate * 100) }}%
+                        </div>
+                        <div class="small">{{ m.games }} games</div>
+                    </a>
+                    {% endfor %}
+                {% else %}
+                    <div class="empty-row">No {{ pos|lower }} matchups with ≥ {{ min_games }} games yet.</div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    {% endif %}
+    {% endif %}
+{% endblock %}
