@@ -1,79 +1,77 @@
 {% extends "base.html" %}
 {% block title %}Champion winrates — LoL Matchups{% endblock %}
 {% block body %}
-    <h1>Champion winrates</h1>
+    <h1>Champion winrates ({{ lane }})</h1>
 
     {% if error %}
         <p class="empty">{{ error }}</p>
     {% else %}
     <form method="get">
-        <label>Position
-            <select name="position">
+        <label>Lane
+            <select name="lane">
                 {% for p in positions %}
-                    <option value="{{ p }}" {% if p == position %}selected{% endif %}>{{ p }}</option>
+                    <option value="{{ p }}" {% if p == lane %}selected{% endif %}>{{ p }}</option>
                 {% endfor %}
             </select>
         </label>
-        <label>Patches
-            <select name="patches" multiple size="{{ available_patches|length }}">
-                {% for p in available_patches %}
-                    <option value="{{ p }}" {% if p in selected_patches %}selected{% endif %}>{{ p }}</option>
+        <label>Tier
+            <select name="tier">
+                {% for t in available_tiers %}
+                    <option value="{{ t }}" {% if t == tier %}selected{% endif %}>{{ t }}</option>
                 {% endfor %}
             </select>
-        </label>
-        <label>Min games
-            <input type="number" name="min_games" value="{{ min_games }}" min="0">
         </label>
         <label>Sort by
             <select name="sort">
-                <option value="winrate" {% if sort_by == 'winrate' %}selected{% endif %}>Winrate</option>
-                <option value="picks"   {% if sort_by == 'picks'   %}selected{% endif %}>Picks</option>
-                <option value="wins"    {% if sort_by == 'wins'    %}selected{% endif %}>Wins</option>
-                <option value="bans"    {% if sort_by == 'bans'    %}selected{% endif %}>Bans</option>
-                <option value="name"    {% if sort_by == 'name'    %}selected{% endif %}>Name</option>
+                <option value="winrate"  {% if sort_by == 'winrate'  %}selected{% endif %}>Winrate</option>
+                <option value="pickrate" {% if sort_by == 'pickrate' %}selected{% endif %}>Pick rate</option>
+                <option value="banrate"  {% if sort_by == 'banrate'  %}selected{% endif %}>Ban rate</option>
+                <option value="games"    {% if sort_by == 'games'    %}selected{% endif %}>Games</option>
+                <option value="name"     {% if sort_by == 'name'     %}selected{% endif %}>Name</option>
             </select>
         </label>
         <button type="submit">Apply</button>
     </form>
 
     <p class="meta">
-        {{ stats|length }} champions ≥ {{ min_games }} games · {{ total_matches }} matches in scope
-        <span class="hint">(patches: {{ selected_patches|join(', ') }})</span>
+        {{ champions|length }} champions in {{ lane }} · tier={{ tier }}
     </p>
 
-    {% if stats %}
+    {% if champions %}
     <table>
         <thead>
             <tr>
                 <th>Champion</th>
+                <th class="num">Tier</th>
                 <th class="num">Winrate</th>
-                <th class="num">Picks</th>
-                <th class="num">W / L</th>
-                <th class="num">Bans</th>
+                <th class="num">Pick rate</th>
+                <th class="num">Ban rate</th>
+                <th class="num">Games</th>
             </tr>
         </thead>
         <tbody>
-            {% for s in stats %}
+            {% for c in champions %}
             <tr>
                 <td class="champ">
-                    <a href="{{ url_for('champion_matchups', champion_name=s.champion_name, position=position) }}">
-                        <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ s.champion_name }}.png"
+                    <a href="{{ url_for('champion_matchups', champion_name=c.champion_name, lane=lane, tier=tier) }}">
+                        <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champ_id(c.champion_name) }}.png"
                              alt="" loading="lazy" onerror="this.style.visibility='hidden'">
                     </a>
-                    <a href="{{ url_for('champion_matchups', champion_name=s.champion_name, position=position) }}">{{ s.champion_name }}</a>
+                    <a href="{{ url_for('champion_matchups', champion_name=c.champion_name, lane=lane, tier=tier) }}">{{ c.champion_name }}</a>
                 </td>
-                <td class="num winrate {% if s.winrate >= 0.52 %}good{% elif s.winrate <= 0.48 %}bad{% endif %}">
-                    {{ "%.1f"|format(s.winrate * 100) }}%
+                <td class="num">{{ c.tier_badge or '—' }}</td>
+                <td class="num winrate {% if c.winrate and c.winrate >= 52 %}good{% elif c.winrate and c.winrate <= 48 %}bad{% endif %}">
+                    {{ "%.2f"|format(c.winrate) ~ "%" if c.winrate is not none else '—' }}
                 </td>
-                <td class="num">{{ s.picks }}</td>
-                <td class="num">{{ s.wins }} / {{ s.losses }}</td>
-                <td class="num">{{ s.bans }}</td>
+                <td class="num">{{ "%.2f"|format(c.pickrate) ~ "%" if c.pickrate is not none else '—' }}</td>
+                <td class="num">{{ "%.2f"|format(c.banrate) ~ "%" if c.banrate is not none else '—' }}</td>
+                <td class="num">{{ "{:,}".format(c.games) if c.games is not none else '—' }}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
     {% else %}
-    <p class="empty">No champions match these filters yet — try lowering "min games" or wait for the crawler.</p>
+    <p class="empty">No champions in this lane × tier yet.</p>
     {% endif %}
     {% endif %}
 {% endblock %}

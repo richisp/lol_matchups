@@ -1,37 +1,38 @@
 {% extends "base.html" %}
 {% block title %}{{ champion_name }} matchups — LoL Matchups{% endblock %}
 {% block body %}
-    <p class="nav"><a href="{{ url_for('index') }}">← all champions</a></p>
+    <p class="nav"><a href="{{ url_for('index', lane=lane, tier=tier) }}">← {{ lane }} champions</a></p>
 
     <h1>
-        <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champion_name }}.png"
+        <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champ_id(champion_name) }}.png"
              alt="" onerror="this.style.visibility='hidden'">
-        {{ champion_name }}
-        {% if my_position %}<span style="color:#888;font-size:1rem;">— {{ my_position }}</span>{% endif %}
-        matchups
+        {{ champion_name }} <span style="color:#888;font-size:1rem;">— {{ lane }} ({{ tier }})</span>
     </h1>
+
+    {% if overall %}
+    <p class="meta">
+        Tier <strong>{{ overall.tier_badge or '—' }}</strong>
+        · WR <strong class="winrate {% if overall.winrate and overall.winrate >= 52 %}good{% elif overall.winrate and overall.winrate <= 48 %}bad{% endif %}">{{ "%.2f"|format(overall.winrate) ~ "%" if overall.winrate is not none else '—' }}</strong>
+        · PR <strong>{{ "%.2f"|format(overall.pickrate) ~ "%" if overall.pickrate is not none else '—' }}</strong>
+        · BR <strong>{{ "%.2f"|format(overall.banrate) ~ "%" if overall.banrate is not none else '—' }}</strong>
+        · {{ "{:,}".format(overall.games) if overall.games is not none else '—' }} games
+    </p>
+    {% endif %}
 
     {% if error %}
         <p class="empty">{{ error }}</p>
     {% else %}
     <form method="get">
-        <label>{{ champion_name }} position
-            <select name="position">
-                <option value="">Any</option>
-                {% for p in positions %}
-                    <option value="{{ p }}" {% if p == my_position %}selected{% endif %}>{{ p }}</option>
-                {% endfor %}
-            </select>
-        </label>
-        <label>Patches
-            <select name="patches" multiple size="{{ available_patches|length }}">
-                {% for p in available_patches %}
-                    <option value="{{ p }}" {% if p in selected_patches %}selected{% endif %}>{{ p }}</option>
-                {% endfor %}
+        <input type="hidden" name="lane" value="{{ lane }}">
+        <input type="hidden" name="tier" value="{{ tier }}">
+        <label>Type
+            <select name="type">
+                <option value="counter" {% if matchup_type == 'counter' %}selected{% endif %}>Strong against</option>
+                <option value="synergy" {% if matchup_type == 'synergy' %}selected{% endif %}>Good synergy</option>
             </select>
         </label>
         <label>Min games
-            <input type="number" name="min_games" value="{{ min_games }}" min="1">
+            <input type="number" name="min_games" value="{{ min_games }}" min="0">
         </label>
         <label>Sort by
             <select name="sort">
@@ -42,13 +43,9 @@
         <button type="submit">Apply</button>
     </form>
 
-    <p class="meta">
-        {{ total_matches }} games with {{ champion_name }}{% if my_position %} in {{ my_position }}{% endif %}
-        <span class="hint">(patches: {{ selected_patches|join(', ') }})</span>
-    </p>
-
-    {% if total_matches == 0 %}
-        <p class="empty">No games found for {{ champion_name }} with these filters.</p>
+    {% set total_count = matchups.values()|map('length')|sum %}
+    {% if total_count == 0 %}
+        <p class="empty">No matchups for {{ champion_name }} {{ lane }} ({{ tier }}, {{ matchup_type }}) with ≥ {{ min_games }} games.</p>
     {% else %}
         {% for pos in positions %}
         <div class="matchup-section">
@@ -56,17 +53,17 @@
             <div class="matchup-row">
                 {% if matchups[pos] %}
                     {% for m in matchups[pos] %}
-                    <a class="matchup-card" href="{{ url_for('champion_matchups', champion_name=m.champion_name, position=my_position) }}">
-                        <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ m.champion_name }}.png"
+                    <a class="matchup-card" href="{{ url_for('champion_matchups', champion_name=m.opponent_name, lane=m.opponent_lane, tier=tier) }}">
+                        <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champ_id(m.opponent_name) }}.png"
                              alt="" loading="lazy" onerror="this.style.visibility='hidden'">
-                        <div class="wr {% if m.winrate >= 0.52 %}good{% elif m.winrate <= 0.48 %}bad{% endif %}">
-                            {{ "%.1f"|format(m.winrate * 100) }}%
+                        <div class="wr {% if m.winrate and m.winrate >= 52 %}good{% elif m.winrate and m.winrate <= 48 %}bad{% endif %}">
+                            {{ "%.2f"|format(m.winrate) ~ "%" if m.winrate is not none else '—' }}
                         </div>
-                        <div class="small">{{ m.games }} games</div>
+                        <div class="small">{{ "{:,}".format(m.games) if m.games is not none else '—' }} games</div>
                     </a>
                     {% endfor %}
                 {% else %}
-                    <div class="empty-row">No {{ pos|lower }} matchups with ≥ {{ min_games }} games yet.</div>
+                    <div class="empty-row">No {{ pos|lower }} matchups with ≥ {{ min_games }} games.</div>
                 {% endif %}
             </div>
         </div>

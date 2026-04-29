@@ -6,14 +6,14 @@ import db
 
 app = Flask(__name__)
 
-POSITIONS = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"]
+POSITIONS = ["TOP", "JUNGLE", "MID", "BOT", "SUPPORT"]
 
-SORT_KEYS = {
-    "winrate": ("winrate", True),
-    "picks":   ("picks", True),
-    "wins":    ("wins", True),
-    "bans":    ("bans", True),
-    "name":    ("champion_name", False),
+CHAMPION_SORT_KEYS = {
+    "winrate":  ("winrate", True),
+    "pickrate": ("pickrate", True),
+    "banrate":  ("banrate", True),
+    "games":    ("games", True),
+    "name":     ("champion_name", False),
 }
 
 MATCHUP_SORT_KEYS = {
@@ -22,6 +22,7 @@ MATCHUP_SORT_KEYS = {
 }
 
 _dd_version: str | None = None
+_champion_lookup: dict[str, str] = {}
 
 
 def get_dd_version() -> str:
@@ -33,238 +34,173 @@ def get_dd_version() -> str:
     return _dd_version
 
 
-def get_available_patches() -> list[str]:
+def _norm(s: str) -> str:
+    return "".join(c.lower() for c in s if c.isalnum())
+
+
+def _load_champion_lookup() -> dict[str, str]:
+    """Map any reasonable form of a champion name to its Data Dragon id
+    (the asset filename used in /img/champion/<id>.png)."""
+    version = get_dd_version()
+    url = f"https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/champion.json"
+    data = httpx.get(url, timeout=10).json()["data"]
+    lookup: dict[str, str] = {}
+    for dd_id, info in data.items():
+        for variant in (dd_id, info["name"], _norm(dd_id), _norm(info["name"])):
+            lookup[variant] = dd_id
+    return lookup
+
+
+def champ_id(name: str) -> str:
+    global _champion_lookup
+    if not _champion_lookup:
+        _champion_lookup = _load_champion_lookup()
+    return _champion_lookup.get(name) or _champion_lookup.get(_norm(name)) or name
+
+
+app.jinja_env.globals["champ_id"] = champ_id
+
+
+def get_available_tiers() -> list[str]:
     with db.connect(config.DB_PATH) as conn:
-        return [
-            row["patch"]
-            for row in conn.execute(
-                "SELECT DISTINCT patch FROM matches WHERE patch IS NOT NULL ORDER BY patch DESC"
-            )
-        ]
+        return [r["tier"] for r in conn.execute(
+            "SELECT DISTINCT tier FROM champion_stats ORDER BY tier"
+        )]
 
 
-def get_champion_stats(position: str, patches: list[str], min_games: int):
-    if not patches:
-        return [], 0
-
-    patch_qmarks = ",".join("?" * len(patches))
-
+def get_champion_list(lane: str, tier: str, sort_by: str):
     with db.connect(config.DB_PATH) as conn:
         rows = conn.execute(
-            f"""
-            SELECT
-                p.champion_id,
-                p.champion_name,
-                COUNT(*)         AS picks,
-                SUM(p.win)       AS wins
-            FROM match_participants p
-            JOIN matches m ON m.match_id = p.match_id
-            WHERE p.team_position = ?
-              AND m.patch IN ({patch_qmarks})
-            GROUP BY p.champion_id, p.champion_name
-            HAVING picks >= ?
+            """
+            SELECT champion_name, lane, tier, winrate, pickrate, banrate, games, tier_badge
+              FROM champion_stats
+             WHERE lane = ? AND tier = ?
             """,
-            [position, *patches, min_games],
+            (lane, tier),
         ).fetchall()
 
-        ban_rows = conn.execute(
-            f"""
-            SELECT b.champion_id, COUNT(*) AS bans
-            FROM match_bans b
-            JOIN matches m ON m.match_id = b.match_id
-            WHERE m.patch IN ({patch_qmarks})
-            GROUP BY b.champion_id
-            """,
-            patches,
-        ).fetchall()
-        bans = {r["champion_id"]: r["bans"] for r in ban_rows}
-
-        total_matches = conn.execute(
-            f"SELECT COUNT(*) FROM matches WHERE patch IN ({patch_qmarks})",
-            patches,
-        ).fetchone()[0]
-
-    stats = []
-    for r in rows:
-        picks = r["picks"]
-        wins = r["wins"] or 0
-        stats.append({
-            "champion_id": r["champion_id"],
-            "champion_name": r["champion_name"],
-            "picks": picks,
-            "wins": wins,
-            "losses": picks - wins,
-            "winrate": wins / picks,
-            "bans": bans.get(r["champion_id"], 0),
-        })
-    return stats, total_matches
+    out = [dict(r) for r in rows]
+    key, reverse = CHAMPION_SORT_KEYS[sort_by]
+    if key == "champion_name":
+        out.sort(key=lambda r: (r[key] or "").lower(), reverse=reverse)
+    else:
+        out.sort(key=lambda r: (r[key] is None, r[key] or 0), reverse=reverse)
+    return out
 
 
-def get_matchups(champion_name: str, my_position: str | None, patches: list[str], min_games: int):
-    """For a given champion (optionally filtered by their position), return
-    opposing-team champion stats grouped by opposing position.
-
-    Returns (matchups_dict, total_games_for_selected_champion).
-    """
-    if not patches:
-        return {p: [] for p in POSITIONS}, 0
-
-    patch_qmarks = ",".join("?" * len(patches))
-
-    pos_clause = ""
-    pos_args: list = []
-    if my_position:
-        pos_clause = "AND a.team_position = ?"
-        pos_args = [my_position]
-
+def get_matchups(champion: str, lane: str, tier: str, matchup_type: str, min_games: int, sort_by: str):
     with db.connect(config.DB_PATH) as conn:
-        total = conn.execute(
-            f"""
-            SELECT COUNT(*) FROM match_participants a
-            JOIN matches m ON m.match_id = a.match_id
-            WHERE a.champion_name = ?
-              {pos_clause}
-              AND m.patch IN ({patch_qmarks})
-            """,
-            [champion_name, *pos_args, *patches],
-        ).fetchone()[0]
-
         rows = conn.execute(
-            f"""
-            SELECT
-                b.champion_id,
-                b.champion_name,
-                b.team_position AS opp_pos,
-                COUNT(*)  AS games,
-                SUM(b.win) AS opp_wins
-            FROM match_participants a
-            JOIN match_participants b
-                ON a.match_id = b.match_id
-               AND a.team_id != b.team_id
-            JOIN matches m ON m.match_id = a.match_id
-            WHERE a.champion_name = ?
-              {pos_clause}
-              AND m.patch IN ({patch_qmarks})
-              AND b.team_position IS NOT NULL
-            GROUP BY b.champion_id, b.champion_name, b.team_position
-            HAVING games >= ?
+            """
+            SELECT opponent_name, opponent_lane, winrate, pickrate, games
+              FROM matchups
+             WHERE champion_name = ?
+               AND champion_lane = ?
+               AND tier = ?
+               AND matchup_type = ?
+               AND COALESCE(games, 0) >= ?
             """,
-            [champion_name, *pos_args, *patches, min_games],
+            (champion, lane, tier, matchup_type, min_games),
         ).fetchall()
 
     by_position: dict[str, list] = {p: [] for p in POSITIONS}
     for r in rows:
-        pos = r["opp_pos"]
-        if pos not in by_position:
-            continue
-        games = r["games"]
-        opp_wins = r["opp_wins"] or 0
-        by_position[pos].append({
-            "champion_id": r["champion_id"],
-            "champion_name": r["champion_name"],
-            "games": games,
-            "winrate": opp_wins / games,
-        })
+        pos = r["opponent_lane"]
+        if pos in by_position:
+            by_position[pos].append(dict(r))
 
-    return by_position, total
+    key, reverse = MATCHUP_SORT_KEYS[sort_by]
+    for pos in by_position:
+        by_position[pos].sort(key=lambda x, k=key: (x[k] is None, x[k] or 0), reverse=reverse)
+    return by_position
 
 
 @app.route("/")
 def index():
-    available_patches = get_available_patches()
-    if not available_patches:
-        return render_template(
-            "index.html",
-            error="No matches in DB yet — run the crawler first.",
-            positions=POSITIONS,
-        )
+    available_tiers = get_available_tiers()
+    if not available_tiers:
+        return render_template("index.html",
+                               error="No data yet — run crawl_champions.py first.",
+                               positions=POSITIONS)
 
-    position = request.args.get("position", "MIDDLE")
-    if position not in POSITIONS:
-        position = "MIDDLE"
+    lane = (request.args.get("lane") or "BOT").upper()
+    if lane not in POSITIONS:
+        lane = "BOT"
 
-    selected_patches = request.args.getlist("patches")
-    if not selected_patches:
-        selected_patches = available_patches
-    selected_patches = [p for p in selected_patches if p in available_patches]
-
-    try:
-        min_games = max(0, int(request.args.get("min_games", 5)))
-    except ValueError:
-        min_games = 5
+    tier = request.args.get("tier") or available_tiers[0]
+    if tier not in available_tiers:
+        tier = available_tiers[0]
 
     sort_by = request.args.get("sort", "winrate")
-    if sort_by not in SORT_KEYS:
+    if sort_by not in CHAMPION_SORT_KEYS:
         sort_by = "winrate"
 
-    stats, total = get_champion_stats(position, selected_patches, min_games)
-
-    key, reverse = SORT_KEYS[sort_by]
-    if key == "champion_name":
-        stats.sort(key=lambda s: s[key].lower(), reverse=reverse)
-    else:
-        stats.sort(key=lambda s: s[key], reverse=reverse)
+    champions = get_champion_list(lane, tier, sort_by)
 
     return render_template(
         "index.html",
         positions=POSITIONS,
-        position=position,
-        available_patches=available_patches,
-        selected_patches=selected_patches,
-        min_games=min_games,
+        lane=lane,
+        tier=tier,
+        available_tiers=available_tiers,
         sort_by=sort_by,
-        stats=stats,
-        total_matches=total,
+        champions=champions,
         dd_version=get_dd_version(),
     )
 
 
 @app.route("/champion/<champion_name>")
 def champion_matchups(champion_name: str):
-    available_patches = get_available_patches()
-    if not available_patches:
-        return render_template(
-            "champion.html",
-            champion_name=champion_name,
-            error="No matches in DB yet — run the crawler first.",
-            positions=POSITIONS,
-        )
+    available_tiers = get_available_tiers()
+    if not available_tiers:
+        return render_template("champion.html",
+                               champion_name=champion_name,
+                               error="No data yet — run crawl_champions.py first.",
+                               positions=POSITIONS)
 
-    my_position = request.args.get("position", "")
-    if my_position and my_position not in POSITIONS:
-        my_position = ""
+    lane = (request.args.get("lane") or "BOT").upper()
+    if lane not in POSITIONS:
+        lane = "BOT"
 
-    selected_patches = request.args.getlist("patches")
-    if not selected_patches:
-        selected_patches = available_patches
-    selected_patches = [p for p in selected_patches if p in available_patches]
+    tier = request.args.get("tier") or available_tiers[0]
+    if tier not in available_tiers:
+        tier = available_tiers[0]
+
+    matchup_type = request.args.get("type", "counter")
+    if matchup_type not in ("counter", "synergy"):
+        matchup_type = "counter"
 
     try:
-        min_games = max(1, int(request.args.get("min_games", 3)))
+        min_games = max(0, int(request.args.get("min_games", 30)))
     except ValueError:
-        min_games = 3
+        min_games = 30
 
     sort_by = request.args.get("sort", "winrate")
     if sort_by not in MATCHUP_SORT_KEYS:
         sort_by = "winrate"
 
-    matchups, total = get_matchups(champion_name, my_position or None, selected_patches, min_games)
+    matchups = get_matchups(champion_name, lane, tier, matchup_type, min_games, sort_by)
 
-    key, reverse = MATCHUP_SORT_KEYS[sort_by]
-    for pos in matchups:
-        matchups[pos].sort(key=lambda x, k=key: x[k], reverse=reverse)
+    with db.connect(config.DB_PATH) as conn:
+        overall_row = conn.execute(
+            "SELECT winrate, pickrate, banrate, games, tier_badge FROM champion_stats "
+            "WHERE champion_name=? AND lane=? AND tier=?",
+            (champion_name, lane, tier),
+        ).fetchone()
+    overall = dict(overall_row) if overall_row else None
 
     return render_template(
         "champion.html",
         champion_name=champion_name,
-        my_position=my_position,
+        lane=lane,
+        tier=tier,
         positions=POSITIONS,
-        available_patches=available_patches,
-        selected_patches=selected_patches,
+        available_tiers=available_tiers,
+        matchup_type=matchup_type,
         min_games=min_games,
         sort_by=sort_by,
         matchups=matchups,
-        total_matches=total,
+        overall=overall,
         dd_version=get_dd_version(),
     )
 
