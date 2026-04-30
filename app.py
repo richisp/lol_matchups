@@ -1,19 +1,29 @@
+import os
+import sys
+
 import httpx
-from flask import Flask, render_template, request
+from flask import Flask, jsonify, render_template, request
 
 import config
 import db
 
-app = Flask(__name__)
+# When frozen by PyInstaller, templates extract to sys._MEIPASS/templates.
+if getattr(sys, "frozen", False):
+    _template_folder = os.path.join(sys._MEIPASS, "templates")  # type: ignore[attr-defined]
+else:
+    _template_folder = "templates"
+
+app = Flask(__name__, template_folder=_template_folder)
 
 POSITIONS = ["TOP", "JUNGLE", "MID", "BOT", "SUPPORT"]
 
 CHAMPION_SORT_KEYS = {
-    "winrate":  ("winrate", True),
-    "pickrate": ("pickrate", True),
-    "banrate":  ("banrate", True),
-    "games":    ("games", True),
-    "name":     ("champion_name", False),
+    "winrate":     ("winrate", True),
+    "pickrate":    ("pickrate", True),
+    "banrate":     ("banrate", True),
+    "games":       ("games", True),
+    "blind_risk":  ("blind_risk", False),  # ascending — lower risk is better
+    "name":        ("champion_name", False),
 }
 
 MATCHUP_SORT_KEYS = {
@@ -68,6 +78,44 @@ def get_available_tiers() -> list[str]:
         )]
 
 
+def compute_blind_risk(conn, lane: str, tier: str) -> dict[str, float]:
+    """For each champion in `lane × tier`, compute a blind-pick risk score.
+
+    For each enemy lane L:
+        bad_pr_L = SUM(pickrate) over counter matchups where focal.WR < threshold
+        contribution = bad_pr_L * (counter_weight[lane][L] / 100)
+    score = SUM(contribution) over the 5 enemy lanes.
+
+    Lower = safer blind pick (less popular bad-matchup exposure, weighted by
+    how much each enemy lane impacts your pick choice).
+    """
+    if lane not in config.COUNTER_WEIGHTS:
+        return {}
+    weights = config.COUNTER_WEIGHTS[lane]
+    threshold = config.BLIND_PICK_BAD_WR_THRESHOLD
+
+    rows = conn.execute(
+        """
+        SELECT champion_name,
+               opponent_lane,
+               COALESCE(SUM(pickrate), 0) AS bad_pr
+          FROM matchups
+         WHERE champion_lane = ?
+           AND tier = ?
+           AND matchup_type = 'counter'
+           AND winrate < ?
+         GROUP BY champion_name, opponent_lane
+        """,
+        (lane, tier, threshold),
+    ).fetchall()
+
+    scores: dict[str, float] = {}
+    for r in rows:
+        weight = weights.get(r["opponent_lane"], 0) / 100.0
+        scores[r["champion_name"]] = scores.get(r["champion_name"], 0.0) + r["bad_pr"] * weight
+    return scores
+
+
 def get_champion_list(lane: str, tier: str, sort_by: str):
     with db.connect(config.DB_PATH) as conn:
         rows = conn.execute(
@@ -78,8 +126,12 @@ def get_champion_list(lane: str, tier: str, sort_by: str):
             """,
             (lane, tier),
         ).fetchall()
+        risk = compute_blind_risk(conn, lane, tier)
 
     out = [dict(r) for r in rows]
+    for d in out:
+        d["blind_risk"] = risk.get(d["champion_name"], 0.0)
+
     key, reverse = CHAMPION_SORT_KEYS[sort_by]
     if key == "champion_name":
         out.sort(key=lambda r: (r[key] or "").lower(), reverse=reverse)
@@ -145,6 +197,196 @@ def index():
         available_tiers=available_tiers,
         sort_by=sort_by,
         champions=champions,
+        dd_version=get_dd_version(),
+    )
+
+
+def parse_team(prefix: str) -> dict[str, str]:
+    """Read 5 lane-keyed champion picks from query params, e.g. my_TOP=Garen.
+    Returns dict mapping POSITION → champion_name (skipping empty)."""
+    out: dict[str, str] = {}
+    for pos in POSITIONS:
+        v = (request.args.get(f"{prefix}_{pos}") or "").strip()
+        if v:
+            out[pos] = v
+    return out
+
+
+def parse_bans() -> set[str]:
+    raw = (request.args.get("bans") or "").strip()
+    return {b.strip() for b in raw.split(",") if b.strip()}
+
+
+def compute_draft_scores(
+    conn,
+    lane: str,
+    tier: str,
+    my_team: dict[str, str],
+    enemy_team: dict[str, str],
+    bans: set[str],
+) -> list[dict]:
+    """Return all candidates for `lane × tier` with fit scores.
+
+    fit = base_winrate + Σ counter_contrib + Σ synergy_contrib
+    """
+    counter_w = config.COUNTER_WEIGHTS.get(lane, {})
+    synergy_w = config.SYNERGY_WEIGHTS.get(lane, {})
+
+    # Candidates = champions with stats in this lane × tier, minus bans/already-picked.
+    excluded = bans | set(my_team.values()) | set(enemy_team.values())
+    rows = conn.execute(
+        """
+        SELECT champion_name, winrate, pickrate, banrate, games, tier_badge
+          FROM champion_stats
+         WHERE lane = ? AND tier = ?
+        """,
+        (lane, tier),
+    ).fetchall()
+    candidates = [dict(r) for r in rows if r["champion_name"] not in excluded]
+    if not candidates:
+        return []
+
+    # Bulk-fetch all matchup rows for these candidates against the picked enemies/teammates.
+    enemy_keys = [(c["champion_name"], lane, e_name, e_lane, "counter")
+                  for c in candidates for e_lane, e_name in enemy_team.items()]
+    synergy_keys = [(c["champion_name"], lane, t_name, t_lane, "synergy")
+                    for c in candidates for t_lane, t_name in my_team.items()]
+
+    matchup_lookup: dict[tuple, dict] = {}
+    for keyset in (enemy_keys, synergy_keys):
+        if not keyset:
+            continue
+        # OR over composite keys via UNION of equality groups (kept simple — N is small)
+        for k in keyset:
+            row = conn.execute(
+                """
+                SELECT winrate, games FROM matchups
+                 WHERE champion_name=? AND champion_lane=? AND opponent_name=?
+                   AND opponent_lane=? AND matchup_type=? AND tier=?
+                """,
+                (*k, tier),
+            ).fetchone()
+            if row:
+                matchup_lookup[k] = dict(row)
+
+    out = []
+    for c in candidates:
+        name = c["champion_name"]
+        base = c["winrate"] or 50.0
+
+        counter_contribs = []
+        counter_breakdown = []
+        for e_lane, e_name in enemy_team.items():
+            mu = matchup_lookup.get((name, lane, e_name, e_lane, "counter"))
+            weight = counter_w.get(e_lane, 0) / 100.0
+            if mu and mu.get("winrate") is not None and (mu.get("games") or 0) >= 30:
+                contrib = (mu["winrate"] - 50.0) * weight
+                counter_contribs.append(contrib)
+                counter_breakdown.append({
+                    "opponent": e_name, "lane": e_lane,
+                    "winrate": mu["winrate"], "games": mu["games"],
+                    "weight": weight, "contrib": contrib,
+                })
+            else:
+                counter_breakdown.append({
+                    "opponent": e_name, "lane": e_lane,
+                    "winrate": None, "games": (mu or {}).get("games"),
+                    "weight": weight, "contrib": 0.0,
+                })
+
+        synergy_contribs = []
+        synergy_breakdown = []
+        for t_lane, t_name in my_team.items():
+            if t_lane == lane:
+                continue  # the active slot itself
+            mu = matchup_lookup.get((name, lane, t_name, t_lane, "synergy"))
+            weight = synergy_w.get(t_lane, 0) / 100.0
+            if mu and mu.get("winrate") is not None and (mu.get("games") or 0) >= 30:
+                contrib = (mu["winrate"] - 50.0) * weight
+                synergy_contribs.append(contrib)
+                synergy_breakdown.append({
+                    "ally": t_name, "lane": t_lane,
+                    "winrate": mu["winrate"], "games": mu["games"],
+                    "weight": weight, "contrib": contrib,
+                })
+            else:
+                synergy_breakdown.append({
+                    "ally": t_name, "lane": t_lane,
+                    "winrate": None, "games": (mu or {}).get("games"),
+                    "weight": weight, "contrib": 0.0,
+                })
+
+        counter_total = sum(counter_contribs)
+        synergy_total = sum(synergy_contribs)
+        fit = base + counter_total + synergy_total
+        out.append({
+            **c,
+            "base": base,
+            "counter_total": counter_total,
+            "synergy_total": synergy_total,
+            "fit": fit,
+            "counter_breakdown": counter_breakdown,
+            "synergy_breakdown": synergy_breakdown,
+        })
+
+    out.sort(key=lambda r: r["fit"], reverse=True)
+    return out
+
+
+@app.route("/api/lcu")
+def api_lcu():
+    """Snapshot of current champ select state from the local LoL client."""
+    import lcu
+    return jsonify(lcu.get_state(get_dd_version()))
+
+
+@app.route("/draft")
+def draft():
+    available_tiers = get_available_tiers()
+    if not available_tiers:
+        return render_template("draft.html",
+                               error="No data yet — run crawl_champions.py first.",
+                               positions=POSITIONS)
+
+    tier = request.args.get("tier") or available_tiers[0]
+    if tier not in available_tiers:
+        tier = available_tiers[0]
+
+    active = (request.args.get("active") or "BOT").upper()
+    if active not in POSITIONS:
+        active = "BOT"
+
+    my_team = parse_team("my")
+    enemy_team = parse_team("enemy")
+    bans = parse_bans()
+
+    # Strip the active slot from my_team for scoring (it's the one we're filling).
+    my_team_for_scoring = {k: v for k, v in my_team.items() if k != active}
+
+    with db.connect(config.DB_PATH) as conn:
+        candidates = compute_draft_scores(
+            conn, active, tier,
+            my_team_for_scoring, enemy_team, bans,
+        )
+        # All champion display names (for the autocomplete datalist).
+        champ_names = sorted({
+            r["champion_name"] for r in conn.execute(
+                "SELECT DISTINCT champion_name FROM champion_stats"
+            )
+        })
+
+    return render_template(
+        "draft.html",
+        positions=POSITIONS,
+        active=active,
+        tier=tier,
+        available_tiers=available_tiers,
+        my_team=my_team,
+        enemy_team=enemy_team,
+        bans=sorted(bans),
+        bans_str=",".join(sorted(bans)),
+        candidates=candidates,
+        champ_names=champ_names,
         dd_version=get_dd_version(),
     )
 

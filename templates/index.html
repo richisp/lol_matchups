@@ -23,11 +23,12 @@
         </label>
         <label>Sort by
             <select name="sort">
-                <option value="winrate"  {% if sort_by == 'winrate'  %}selected{% endif %}>Winrate</option>
-                <option value="pickrate" {% if sort_by == 'pickrate' %}selected{% endif %}>Pick rate</option>
-                <option value="banrate"  {% if sort_by == 'banrate'  %}selected{% endif %}>Ban rate</option>
-                <option value="games"    {% if sort_by == 'games'    %}selected{% endif %}>Games</option>
-                <option value="name"     {% if sort_by == 'name'     %}selected{% endif %}>Name</option>
+                <option value="winrate"     {% if sort_by == 'winrate'     %}selected{% endif %}>Winrate</option>
+                <option value="pickrate"    {% if sort_by == 'pickrate'    %}selected{% endif %}>Pick rate</option>
+                <option value="banrate"     {% if sort_by == 'banrate'     %}selected{% endif %}>Ban rate</option>
+                <option value="games"       {% if sort_by == 'games'       %}selected{% endif %}>Games</option>
+                <option value="blind_risk"  {% if sort_by == 'blind_risk'  %}selected{% endif %}>Blind risk (low = safer)</option>
+                <option value="name"        {% if sort_by == 'name'        %}selected{% endif %}>Name</option>
             </select>
         </label>
         <button type="submit">Apply</button>
@@ -47,6 +48,7 @@
                 <th class="num">Pick rate</th>
                 <th class="num">Ban rate</th>
                 <th class="num">Games</th>
+                <th class="num" title="Weighted exposure to popular bad matchups (lower = safer blind pick)">Blind risk</th>
             </tr>
         </thead>
         <tbody>
@@ -66,6 +68,7 @@
                 <td class="num">{{ "%.2f"|format(c.pickrate) ~ "%" if c.pickrate is not none else '—' }}</td>
                 <td class="num">{{ "%.2f"|format(c.banrate) ~ "%" if c.banrate is not none else '—' }}</td>
                 <td class="num">{{ "{:,}".format(c.games) if c.games is not none else '—' }}</td>
+                <td class="num">{{ "%.2f"|format(c.blind_risk) }}</td>
             </tr>
             {% endfor %}
         </tbody>

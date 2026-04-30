@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+{% block title %}Champ select helper — LoL Draft{% endblock %}
+{% block body %}
+    <h1 style="margin-bottom: 0.4rem;">Champ select helper</h1>
+    <p class="meta">
+        Fill in picks → recommendations update for the slot marked <strong>Your pick</strong>.
+        Tier:
+        <select form="draft-form" name="tier" onchange="this.form.submit()">
+            {% for t in available_tiers %}
+                <option value="{{ t }}" {% if t == tier %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+        </select>
+        <span id="lcu-status" class="lcu-badge lcu-unknown">LCU: …</span>
+        <label style="display:inline-flex; gap:0.3rem; align-items:center; margin-left:0.6rem;">
+            <input type="checkbox" id="lcu-sync" checked>
+            <span>auto-sync</span>
+        </label>
+    </p>
+
+    {% if error %}
+        <p class="empty">{{ error }}</p>
+    {% else %}
+
+    <form id="draft-form" method="get" action="{{ url_for('draft') }}">
+        <input type="hidden" name="active" value="{{ active }}" id="active-input">
+        <input type="hidden" name="tier" value="{{ tier }}">
+        <div class="draft-board">
+            <div class="team team-mine">
+                <h2>Your team</h2>
+                {% for pos in positions %}
+                <div class="slot {% if pos == active %}slot-active{% endif %}">
+                    <button type="button" class="slot-pick" data-active="{{ pos }}"
+                            title="Make this the active slot">
+                        {% if pos == active %}● Your pick{% else %}○ pick here{% endif %}
+                    </button>
+                    <div class="slot-row">
+                        <div class="slot-icon">
+                            {% if my_team[pos] %}
+                            <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champ_id(my_team[pos]) }}.png"
+                                 alt="" onerror="this.style.visibility='hidden'">
+                            {% endif %}
+                        </div>
+                        <div class="slot-fields">
+                            <div class="slot-lane">{{ pos }}</div>
+                            <input type="text" name="my_{{ pos }}"
+                                   list="champ-list"
+                                   placeholder="champion"
+                                   value="{{ my_team[pos] or '' }}"
+                                   autocomplete="off">
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <div class="recs">
+                <h2>Recommendations <span class="meta-inline">— {{ active }}</span></h2>
+                {% if candidates %}
+                <table class="recs-table">
+                    <thead>
+                        <tr>
+                            <th>Champion</th>
+                            <th class="num">Fit</th>
+                            <th class="num" title="Champion's overall winrate in this lane × tier">Base</th>
+                            <th class="num" title="Sum of weighted counter-matchup deltas vs picked enemies">vs</th>
+                            <th class="num" title="Sum of weighted synergy deltas with picked teammates">w/</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for c in candidates[:30] %}
+                        <tr>
+                            <td class="champ">
+                                <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champ_id(c.champion_name) }}.png"
+                                     alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+                                <button type="button" class="rec-pick" data-name="{{ c.champion_name }}">{{ c.champion_name }}</button>
+                            </td>
+                            <td class="num winrate {% if c.fit >= 52 %}good{% elif c.fit <= 48 %}bad{% endif %}">
+                                {{ "%.2f"|format(c.fit) }}
+                            </td>
+                            <td class="num">{{ "%.2f"|format(c.base) }}</td>
+                            <td class="num {% if c.counter_total > 0 %}good{% elif c.counter_total < 0 %}bad{% endif %}">
+                                {% if c.counter_total >= 0 %}+{% endif %}{{ "%.2f"|format(c.counter_total) }}
+                            </td>
+                            <td class="num {% if c.synergy_total > 0 %}good{% elif c.synergy_total < 0 %}bad{% endif %}">
+                                {% if c.synergy_total >= 0 %}+{% endif %}{{ "%.2f"|format(c.synergy_total) }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <p class="meta">{{ candidates|length }} candidates · showing top 30</p>
+                {% else %}
+                <p class="empty">No candidates yet — fill in your lane and check tier.</p>
+                {% endif %}
+            </div>
+
+            <div class="team team-enemy">
+                <h2>Enemy team</h2>
+                {% for pos in positions %}
+                <div class="slot">
+                    <div class="slot-row">
+                        <div class="slot-icon">
+                            {% if enemy_team[pos] %}
+                            <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champ_id(enemy_team[pos]) }}.png"
+                                 alt="" onerror="this.style.visibility='hidden'">
+                            {% endif %}
+                        </div>
+                        <div class="slot-fields">
+                            <div class="slot-lane">{{ pos }}</div>
+                            <input type="text" name="enemy_{{ pos }}"
+                                   list="champ-list"
+                                   placeholder="champion"
+                                   value="{{ enemy_team[pos] or '' }}"
+                                   autocomplete="off">
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="bans-row">
+            <label>Bans (comma-separated)
+                <input type="text" name="bans" value="{{ bans_str }}" placeholder="e.g. Yasuo, Yone">
+            </label>
+            <button type="submit">Apply</button>
+        </div>
+    </form>
+
+    <datalist id="champ-list">
+        {% for n in champ_names %}<option value="{{ n }}">{% endfor %}
+    </datalist>
+
+    <style>
+        .draft-board {
+            display: grid;
+            grid-template-columns: 280px 1fr 280px;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        .team h2, .recs h2 {
+            text-transform: uppercase;
+            font-size: 0.78rem;
+            letter-spacing: 0.7px;
+            color: #888;
+            margin: 0 0 0.6rem;
+        }
+        .meta-inline { color: #aaa; font-size: 0.85rem; font-weight: 400; text-transform: none; letter-spacing: 0; }
+        .slot {
+            background: #18181b; border: 1px solid #2a2a2e; border-radius: 6px;
+            padding: 0.55rem; margin-bottom: 0.5rem;
+        }
+        .slot-active { border-color: #5b8def; box-shadow: 0 0 0 1px #5b8def inset; }
+        .slot-pick {
+            background: transparent; color: #888; border: none; padding: 0 0 0.3rem;
+            cursor: pointer; font-size: 0.75rem; font-family: inherit;
+        }
+        .slot-active .slot-pick { color: #5b8def; font-weight: 600; }
+        .slot-row { display: flex; align-items: center; gap: 0.6rem; }
+        .slot-icon { width: 40px; height: 40px; flex: 0 0 40px; background: #232328; border-radius: 4px; overflow: hidden; }
+        .slot-icon img { width: 40px; height: 40px; }
+        .slot-fields { flex: 1; }
+        .slot-lane { font-size: 0.7rem; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.15rem; }
+        .slot-fields input {
+            background: #232328; color: #e6e6e6; border: 1px solid #34343a;
+            padding: 0.35rem 0.5rem; border-radius: 4px; font-size: 0.9rem;
+            width: 100%; font-family: inherit;
+        }
+
+        .recs { display: flex; flex-direction: column; }
+        .recs-table {
+            width: 100%; border-collapse: collapse; background: #18181b; border-radius: 6px; overflow: hidden;
+        }
+        .recs-table th { padding: 0.45rem 0.6rem; }
+        .recs-table td { padding: 0.35rem 0.6rem; }
+        .recs-table .champ img { width: 28px; height: 28px; border-radius: 3px; }
+        .rec-pick {
+            background: transparent; color: inherit; border: none; padding: 0;
+            cursor: pointer; font-family: inherit; font-size: 0.95rem; text-align: left;
+        }
+        .rec-pick:hover { color: #5b8def; text-decoration: underline; }
+
+        .bans-row {
+            display: flex; gap: 1rem; align-items: end;
+            background: #18181b; border: 1px solid #2a2a2e; border-radius: 6px;
+            padding: 0.7rem 1rem;
+        }
+        .bans-row label { flex: 1; }
+        .bans-row input { width: 100%; }
+
+        .lcu-badge {
+            display: inline-block; margin-left: 0.5rem;
+            padding: 0.15rem 0.5rem; border-radius: 999px;
+            font-size: 0.72rem; font-weight: 500; letter-spacing: 0.3px;
+        }
+        .lcu-unknown { background: #2a2a2e; color: #999; }
+        .lcu-off     { background: #3a2222; color: #e85a5a; }
+        .lcu-idle    { background: #2a2a3a; color: #aaa; }
+        .lcu-live    { background: #1f3a25; color: #5cd65c; }
+    </style>
+
+    <script>
+        // Click "pick here" → set active slot, submit form
+        document.querySelectorAll('.slot-pick').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.getElementById('active-input').value = btn.dataset.active;
+                document.getElementById('draft-form').submit();
+            });
+        });
+        // Click a recommendation → fill the active slot, submit form
+        document.querySelectorAll('.rec-pick').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const active = document.getElementById('active-input').value;
+                const slot = document.querySelector(`input[name="my_${active}"]`);
+                if (slot) {
+                    slot.value = btn.dataset.name;
+                    document.getElementById('draft-form').submit();
+                }
+            });
+        });
+        // Auto-submit when any text input changes (on blur)
+        document.querySelectorAll('input[type="text"]').forEach(el => {
+            el.addEventListener('change', () => document.getElementById('draft-form').submit());
+        });
+
+        // ---- LCU auto-sync ----
+        const lcuStatus  = document.getElementById('lcu-status');
+        const lcuToggle  = document.getElementById('lcu-sync');
+        let lastLcuHash  = '';
+
+        function setBadge(text, cls) {
+            lcuStatus.textContent = text;
+            lcuStatus.className = 'lcu-badge ' + cls;
+        }
+
+        async function pollLcu() {
+            try {
+                const r = await fetch('/api/lcu', { cache: 'no-store' });
+                const d = await r.json();
+
+                if (!d.connected) {
+                    setBadge('LCU: client not running', 'lcu-off');
+                    return;
+                }
+                if (!d.in_champ_select) {
+                    setBadge('LCU: not in champ select', 'lcu-idle');
+                    return;
+                }
+                setBadge('LCU: in champ select', 'lcu-live');
+
+                if (!lcuToggle.checked) return;
+
+                // Hash the relevant state. Resubmit only when it changes — so
+                // the page doesn't reload on every poll.
+                const hash = JSON.stringify({
+                    my: d.my_team, enemy: d.enemy_team,
+                    lane: d.my_lane, bans: d.bans,
+                });
+                if (hash === lastLcuHash) return;
+                lastLcuHash = hash;
+
+                const form = document.getElementById('draft-form');
+                for (const [pos, name] of Object.entries(d.my_team || {})) {
+                    const inp = form.querySelector(`input[name="my_${pos}"]`);
+                    if (inp) inp.value = name;
+                }
+                for (const [pos, name] of Object.entries(d.enemy_team || {})) {
+                    const inp = form.querySelector(`input[name="enemy_${pos}"]`);
+                    if (inp) inp.value = name;
+                }
+                const bansInp = form.querySelector('input[name="bans"]');
+                if (bansInp) bansInp.value = (d.bans || []).join(', ');
+                if (d.my_lane) {
+                    document.getElementById('active-input').value = d.my_lane;
+                }
+                form.submit();
+            } catch (e) {
+                console.error('LCU poll error', e);
+            }
+        }
+
+        setInterval(pollLcu, 2000);
+        pollLcu();
+    </script>
+
+    {% endif %}
+{% endblock %}
