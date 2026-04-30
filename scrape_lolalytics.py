@@ -279,6 +279,60 @@ def format_section(rows: list, header: str) -> str:
     return "\n".join(out)
 
 
+def fetch_lane_pool(lane: str, tier: str = DEFAULT_TIER, min_pickrate: float = 1.0) -> list[dict]:
+    """Visit lolalytics' tier list page for a lane × tier and return the
+    list of champions whose pick rate exceeds `min_pickrate` (in percent).
+    Each entry: {slug, name, pickrate}.
+
+    `slug` is lolalytics' URL slug (e.g. 'kSante' style lowercased) — feed
+    straight into scrape_champion(). `name` is the display name (e.g. "K'Sante")
+    used as the canonical champion identifier in our DB.
+    """
+    url = f"https://lolalytics.com/lol/tierlist/?lane={lane}&tier={tier}"
+    print(f"fetching pool: {url}")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=HEADLESS)
+        try:
+            ctx = browser.new_context(viewport={"width": 2400, "height": 1100})
+            page = ctx.new_page()
+            page.goto(url, timeout=60000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            dismiss_consent(page)
+            # Scroll the whole page so every row renders.
+            for _ in range(20):
+                page.mouse.wheel(0, 900)
+                page.wait_for_timeout(120)
+            page.evaluate("window.scrollTo(0, 0)")
+            page.wait_for_timeout(500)
+
+            entries = page.evaluate(r"""() => {
+                const rows = [...document.querySelectorAll('div')]
+                    .filter(d => /h-\[52px\]/.test(d.className || ''));
+                const out = [];
+                for (const row of rows) {
+                    const link = row.querySelector('a[href*="/build/"]');
+                    if (!link) continue;
+                    const m = (link.getAttribute('href') || '').match(/\/lol\/([a-z0-9]+)\/build/i);
+                    if (!m) continue;
+                    const slug = m[1];
+                    const img = row.querySelector('img[alt]');
+                    const name = img ? (img.alt || '').trim() : '';
+                    // Column index 6 is pick rate (verified empirically).
+                    const prText = (row.children[6]?.textContent || '').trim();
+                    const pr = parseFloat(prText.replace(',', '')) || 0;
+                    if (slug && name) out.push({ slug, name, pickrate: pr });
+                }
+                return out;
+            }""")
+        finally:
+            browser.close()
+
+    return [e for e in entries if e["pickrate"] > min_pickrate]
+
+
 def scrape_champion(champion: str, lane: str, tier: str = DEFAULT_TIER) -> dict:
     """Open lolalytics for a champion + lane + tier and return:
         {
