@@ -6,6 +6,7 @@ from flask import Flask, jsonify, render_template, request
 
 import config
 import db
+import lcu
 
 # When frozen by PyInstaller, templates extract to sys._MEIPASS/templates.
 if getattr(sys, "frozen", False):
@@ -15,7 +16,7 @@ else:
 
 app = Flask(__name__, template_folder=_template_folder)
 
-POSITIONS = ["TOP", "JUNGLE", "MID", "BOT", "SUPPORT"]
+POSITIONS = list(config.POSITIONS)
 
 CHAMPION_SORT_KEYS = {
     "winrate":     ("winrate", True),
@@ -33,6 +34,7 @@ MATCHUP_SORT_KEYS = {
 
 _dd_version: str | None = None
 _champion_lookup: dict[str, str] = {}
+_available_tiers_cache: list[str] | None = None
 
 
 def get_dd_version() -> str:
@@ -72,10 +74,15 @@ app.jinja_env.globals["champ_id"] = champ_id
 
 
 def get_available_tiers() -> list[str]:
-    with db.connect(config.DB_PATH) as conn:
-        return [r["tier"] for r in conn.execute(
-            "SELECT DISTINCT tier FROM champion_stats ORDER BY tier"
-        )]
+    """Tiers present in the DB. Cached for the process lifetime — recrawling
+    new tiers requires restarting the app, which is fine for a desktop tool."""
+    global _available_tiers_cache
+    if _available_tiers_cache is None:
+        with db.connect(config.DB_PATH) as conn:
+            _available_tiers_cache = [r["tier"] for r in conn.execute(
+                "SELECT DISTINCT tier FROM champion_stats ORDER BY tier"
+            )]
+    return _available_tiers_cache
 
 
 def compute_blind_risk(conn, lane: str, tier: str) -> dict[str, float]:
@@ -246,28 +253,45 @@ def compute_draft_scores(
     if not candidates:
         return []
 
-    # Bulk-fetch all matchup rows for these candidates against the picked enemies/teammates.
-    enemy_keys = [(c["champion_name"], lane, e_name, e_lane, "counter")
-                  for c in candidates for e_lane, e_name in enemy_team.items()]
-    synergy_keys = [(c["champion_name"], lane, t_name, t_lane, "synergy")
-                    for c in candidates for t_lane, t_name in my_team.items()]
-
+    # Bulk-fetch all relevant matchup rows in two queries (one per matchup_type).
+    # Previously we ran ~candidates × picked-team queries (~1000+ per request);
+    # batching cuts that to two regardless of team size.
     matchup_lookup: dict[tuple, dict] = {}
-    for keyset in (enemy_keys, synergy_keys):
-        if not keyset:
-            continue
-        # OR over composite keys via UNION of equality groups (kept simple — N is small)
-        for k in keyset:
-            row = conn.execute(
-                """
-                SELECT winrate, games FROM matchups
-                 WHERE champion_name=? AND champion_lane=? AND opponent_name=?
-                   AND opponent_lane=? AND matchup_type=? AND tier=?
-                """,
-                (*k, tier),
-            ).fetchone()
-            if row:
-                matchup_lookup[k] = dict(row)
+    candidate_names = [c["champion_name"] for c in candidates]
+
+    def _fetch_matchups(opponents: dict[str, str], matchup_type: str) -> None:
+        if not opponents:
+            return
+        opp_names = list(opponents.values())
+        opp_lanes = list(opponents.keys())
+        cand_ph = ",".join("?" * len(candidate_names))
+        name_ph = ",".join("?" * len(opp_names))
+        lane_ph = ",".join("?" * len(opp_lanes))
+        rows = conn.execute(
+            f"""
+            SELECT champion_name, opponent_name, opponent_lane, winrate, games
+              FROM matchups
+             WHERE tier = ?
+               AND champion_lane = ?
+               AND matchup_type = ?
+               AND champion_name IN ({cand_ph})
+               AND opponent_name IN ({name_ph})
+               AND opponent_lane IN ({lane_ph})
+            """,
+            (tier, lane, matchup_type, *candidate_names, *opp_names, *opp_lanes),
+        ).fetchall()
+        # The IN-clause filter is over-broad: it admits any opponent_name in
+        # any opponent_lane, even pairs that don't actually exist in our team.
+        # Keep only rows where (opponent_name, opponent_lane) corresponds to an
+        # actually-picked opponent.
+        for r in rows:
+            if opponents.get(r["opponent_lane"]) != r["opponent_name"]:
+                continue
+            key = (r["champion_name"], lane, r["opponent_name"], r["opponent_lane"], matchup_type)
+            matchup_lookup[key] = dict(r)
+
+    _fetch_matchups(enemy_team, "counter")
+    _fetch_matchups(my_team, "synergy")
 
     out = []
     for c in candidates:
@@ -335,8 +359,16 @@ def compute_draft_scores(
 
 @app.route("/api/lcu")
 def api_lcu():
-    """Snapshot of current champ select state from the local LoL client."""
-    import lcu
+    """Snapshot of current champ select state from the local LoL client.
+    Accepts ?tier= so role inference (for picks without assignedPosition) uses
+    the tier the user is currently viewing."""
+    available = get_available_tiers()
+    tier = request.args.get("tier") or (available[0] if available else None)
+    if tier and tier not in available:
+        tier = available[0] if available else None
+    if tier:
+        with db.connect(config.DB_PATH) as conn:
+            return jsonify(lcu.get_state(get_dd_version(), tier=tier, conn=conn))
     return jsonify(lcu.get_state(get_dd_version()))
 
 

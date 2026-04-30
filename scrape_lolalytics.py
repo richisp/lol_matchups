@@ -17,13 +17,13 @@ from pathlib import Path
 
 from playwright.sync_api import Page, sync_playwright
 
+import config
+
 HEADLESS = os.environ.get("HEADLESS", "0") == "1"
 
 DEFAULT_CHAMPION = "swain"
 DEFAULT_LANE = "bottom"
-DEFAULT_TIER = "emerald_plus"
-
-POSITION_LABELS = ["TOP", "JUNGLE", "MID", "BOT", "SUPPORT"]
+DEFAULT_TIER = config.DEFAULT_TIER
 
 
 EXTRACT_OVERALL_JS = r"""

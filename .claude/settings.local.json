@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import config, db, lcu, app; print\\('OK'\\)\")",
+      "Bash(.venv/Scripts/python -c \"import config, db, lcu, app; print\\('OK'\\)\")",
+      "Bash(.venv/Scripts/python -c ' *)"
+    ]
+  }
+}

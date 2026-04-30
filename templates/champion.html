@@ -22,7 +22,7 @@
     {% if error %}
         <p class="empty">{{ error }}</p>
     {% else %}
-    <form method="get">
+    <form method="get" class="filter-form">
         <input type="hidden" name="lane" value="{{ lane }}">
         <input type="hidden" name="tier" value="{{ tier }}">
         <label>Type
