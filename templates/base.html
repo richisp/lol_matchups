@@ -17,7 +17,9 @@
         h1 { font-weight: 300; margin: 0 0 1rem; letter-spacing: 0.5px; display: flex; align-items: center; gap: 0.75rem; }
         h1 img { width: 48px; height: 48px; border-radius: 6px; }
         h2 { font-weight: 400; font-size: 0.9rem; color: #999; margin: 0; text-transform: uppercase; letter-spacing: 0.8px; }
-        form {
+        /* Filter forms (champion list, matchup browser) — opt-in card style.
+           The draft page's form has its own layout and shouldn't pick this up. */
+        .filter-form {
             display: flex; flex-wrap: wrap; gap: 1rem; align-items: end;
             padding: 1rem; background: #18181b; border: 1px solid #2a2a2e;
             border-radius: 8px; margin-bottom: 1rem;

@@ -2,6 +2,8 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
+import config
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS champion_stats (
     champion_name TEXT NOT NULL,
@@ -109,6 +111,8 @@ def upsert_champion_stats(conn, champion: str, lane: str, tier: str, overall: di
             _parse_pct(overall.get("pickrate")),
             _parse_pct(overall.get("banrate")),
             _parse_int(overall.get("games")),
+            # split("?")[0] strips lolalytics' tooltip "?" suffix that's
+            # sometimes appended to the tier badge text (e.g. "S+?").
             (overall.get("tier") or "").strip().split("?")[0] or None,
         ),
     )
@@ -144,15 +148,10 @@ def upsert_matchup(
     )
 
 
-_LANE_TO_POSITION = {
-    "top": "TOP", "jungle": "JUNGLE", "middle": "MID", "bottom": "BOT", "support": "SUPPORT",
-}
-
-
 def store_scrape_result(conn, data: dict) -> tuple[int, int]:
     """Persist one scrape_champion() result. Returns (matchup_count, has_overall)."""
     champ = data["champion"]
-    lane = _LANE_TO_POSITION.get(data["lane"].lower(), data["lane"].upper())
+    lane = config.LANE_TO_POSITION.get(data["lane"].lower(), data["lane"].upper())
     tier = data["tier"]
 
     overall = data.get("overall") or {}
@@ -161,7 +160,24 @@ def store_scrape_result(conn, data: dict) -> tuple[int, int]:
 
     matchup_count = 0
     for matchup_type, key in [("counter", "strong_against"), ("synergy", "good_synergy")]:
-        for row in data.get(key, []):
+        sections = data.get(key, [])
+        # Only refresh this matchup_type when the scrape actually returned
+        # data for it. An empty list means the scrape didn't see anything
+        # (failed tab click, layout change, etc.) — in that case, don't wipe
+        # what we already have on disk.
+        if not sections:
+            continue
+        # Replace the previous batch wholesale so opponents that dropped out
+        # of lolalytics' top-N for this (champ, lane, tier, type) are removed
+        # rather than lingering at stale winrates/games forever.
+        conn.execute(
+            """
+            DELETE FROM matchups
+             WHERE champion_name=? AND champion_lane=? AND tier=? AND matchup_type=?
+            """,
+            (champ, lane, tier, matchup_type),
+        )
+        for row in sections:
             opp_lane = row["position"]
             for c in row["champs"]:
                 stats = c.get("stats", [])

@@ -1,21 +1,27 @@
 {% extends "base.html" %}
 {% block title %}Champ select helper — LoL Draft{% endblock %}
 {% block body %}
+    <div class="draft-layout">
     <h1 style="margin-bottom: 0.4rem;">Champ select helper</h1>
-    <p class="meta">
+    <p class="page-help">
         Fill in picks → recommendations update for the slot marked <strong>Your pick</strong>.
-        Tier:
-        <select form="draft-form" name="tier" onchange="this.form.submit()">
-            {% for t in available_tiers %}
-                <option value="{{ t }}" {% if t == tier %}selected{% endif %}>{{ t }}</option>
-            {% endfor %}
-        </select>
+    </p>
+
+    <div class="toolbar">
+        <label class="toolbar-field">
+            <span>Tier</span>
+            <select form="draft-form" name="tier">
+                {% for t in available_tiers %}
+                    <option value="{{ t }}" {% if t == tier %}selected{% endif %}>{{ t }}</option>
+                {% endfor %}
+            </select>
+        </label>
         <span id="lcu-status" class="lcu-badge lcu-unknown">LCU: …</span>
-        <label style="display:inline-flex; gap:0.3rem; align-items:center; margin-left:0.6rem;">
+        <label class="toolbar-toggle">
             <input type="checkbox" id="lcu-sync" checked>
             <span>auto-sync</span>
         </label>
-    </p>
+    </div>
 
     {% if error %}
         <p class="empty">{{ error }}</p>
@@ -23,7 +29,6 @@
 
     <form id="draft-form" method="get" action="{{ url_for('draft') }}">
         <input type="hidden" name="active" value="{{ active }}" id="active-input">
-        <input type="hidden" name="tier" value="{{ tier }}">
         <div class="draft-board">
             <div class="team team-mine">
                 <h2>Your team</h2>
@@ -55,6 +60,7 @@
 
             <div class="recs">
                 <h2>Recommendations <span class="meta-inline">— {{ active }}</span></h2>
+                <div class="recs-scroll">
                 {% if candidates %}
                 <table class="recs-table">
                     <thead>
@@ -92,6 +98,7 @@
                 {% else %}
                 <p class="empty">No candidates yet — fill in your lane and check tier.</p>
                 {% endif %}
+                </div>
             </div>
 
             <div class="team team-enemy">
@@ -132,66 +139,207 @@
     </datalist>
 
     <style>
+        /* Page is viewport-bounded; only the recs list scrolls. */
+        .draft-layout {
+            display: flex;
+            flex-direction: column;
+            /* fill remaining viewport height below the body's top padding +
+               nav. Approximate; tolerant of small mismatches. */
+            height: calc(100vh - 5rem);
+            min-height: 480px;
+        }
+
+        /* Make the draft form a flex column so the board can claim the
+           remaining vertical space (and the recs scroller inside it can be
+           bounded for overflow:auto). */
+        #draft-form {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-height: 0;
+        }
+
+        .page-help { color: #777; font-size: 0.85rem; margin: 0 0 1rem; }
+
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            background: #18181b;
+            border: 1px solid #2a2a2e;
+            border-radius: 8px;
+            padding: 0.55rem 0.9rem;
+            margin-bottom: 1.25rem;
+        }
+        /* Override base.html's "label { display: flex; flex-direction: column }". */
+        .toolbar-field, .toolbar-toggle {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 0.5rem;
+            color: #aaa;
+            font-size: 0.85rem;
+            text-transform: none;
+            letter-spacing: 0;
+        }
+        .toolbar-field select {
+            padding: 0.3rem 0.55rem;
+            font-size: 0.88rem;
+        }
+        .toolbar-toggle { margin-left: auto; cursor: pointer; }
+        .toolbar-toggle input[type="checkbox"] { margin: 0; }
+
         .draft-board {
             display: grid;
-            grid-template-columns: 280px 1fr 280px;
-            gap: 1rem;
+            grid-template-columns: 320px 1fr 320px;
+            grid-template-rows: minmax(0, 1fr);
+            gap: 1.25rem;
             margin-bottom: 1rem;
+            flex: 1;
+            min-height: 0;
         }
+        .bans-row { flex: 0 0 auto; }
+
         .team h2, .recs h2 {
-            text-transform: uppercase;
             font-size: 0.78rem;
-            letter-spacing: 0.7px;
-            color: #888;
-            margin: 0 0 0.6rem;
+            font-weight: 600;
+            letter-spacing: 1.4px;
+            margin: 0 0 0.75rem;
+            text-transform: uppercase;
         }
-        .meta-inline { color: #aaa; font-size: 0.85rem; font-weight: 400; text-transform: none; letter-spacing: 0; }
+        .team-mine h2 { color: #5b8def; }
+        .team-enemy h2 { color: #e85a5a; }
+        .recs h2 { color: #888; }
+        .meta-inline { color: #777; font-size: 0.85rem; font-weight: 400; letter-spacing: 0; text-transform: none; }
+
         .slot {
-            background: #18181b; border: 1px solid #2a2a2e; border-radius: 6px;
-            padding: 0.55rem; margin-bottom: 0.5rem;
+            background: #18181b;
+            border: 1px solid #2a2a2e;
+            border-radius: 8px;
+            padding: 0;
+            margin-bottom: 0.6rem;
+            overflow: hidden;
+            transition: border-color 0.15s, box-shadow 0.15s;
         }
-        .slot-active { border-color: #5b8def; box-shadow: 0 0 0 1px #5b8def inset; }
+        .team-mine .slot:hover { border-color: #34343a; }
+        .slot-active {
+            border-color: #5b8def;
+            box-shadow: 0 0 0 1px #5b8def, 0 0 14px -4px rgba(91, 141, 239, 0.55);
+        }
         .slot-pick {
-            background: transparent; color: #888; border: none; padding: 0 0 0.3rem;
-            cursor: pointer; font-size: 0.75rem; font-family: inherit;
+            width: 100%;
+            text-align: left;
+            background: transparent;
+            color: #555;
+            border: none;
+            padding: 0.5rem 0.75rem 0.15rem;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
         }
+        .slot-pick:hover { color: #aaa; }
         .slot-active .slot-pick { color: #5b8def; font-weight: 600; }
-        .slot-row { display: flex; align-items: center; gap: 0.6rem; }
-        .slot-icon { width: 40px; height: 40px; flex: 0 0 40px; background: #232328; border-radius: 4px; overflow: hidden; }
-        .slot-icon img { width: 40px; height: 40px; }
-        .slot-fields { flex: 1; }
-        .slot-lane { font-size: 0.7rem; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.15rem; }
+
+        .slot-row {
+            display: flex;
+            align-items: center;
+            gap: 0.7rem;
+            padding: 0.4rem 0.75rem 0.6rem;
+        }
+        .team-enemy .slot-row { padding: 0.7rem 0.75rem; }
+        .slot-icon {
+            width: 52px;
+            height: 52px;
+            flex: 0 0 52px;
+            background: #232328;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .slot-icon img { width: 52px; height: 52px; display: block; }
+        .slot-fields { flex: 1; min-width: 0; }
+        .slot-lane {
+            font-size: 0.7rem;
+            color: #aaa;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
         .slot-fields input {
-            background: #232328; color: #e6e6e6; border: 1px solid #34343a;
-            padding: 0.35rem 0.5rem; border-radius: 4px; font-size: 0.9rem;
-            width: 100%; font-family: inherit;
+            background: #232328;
+            color: #e6e6e6;
+            border: 1px solid #34343a;
+            padding: 0.35rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            width: 100%;
+            font-family: inherit;
+        }
+        .slot-fields input:focus {
+            outline: none;
+            border-color: #5b8def;
         }
 
-        .recs { display: flex; flex-direction: column; }
+        .recs {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+        .recs-scroll {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: #34343a transparent;
+        }
+        .recs-scroll::-webkit-scrollbar { width: 6px; }
+        .recs-scroll::-webkit-scrollbar-thumb { background: #34343a; border-radius: 3px; }
         .recs-table {
-            width: 100%; border-collapse: collapse; background: #18181b; border-radius: 6px; overflow: hidden;
+            width: 100%;
+            border-collapse: collapse;
+            background: #18181b;
+            border-radius: 8px;
+            overflow: hidden;
         }
-        .recs-table th { padding: 0.45rem 0.6rem; }
-        .recs-table td { padding: 0.35rem 0.6rem; }
-        .recs-table .champ img { width: 28px; height: 28px; border-radius: 3px; }
+        .recs-table th { padding: 0.55rem 0.75rem; }
+        .recs-table td { padding: 0.4rem 0.75rem; }
+        .recs-table tr:hover td { background: #1f1f23; }
+        .recs-table .champ { display: flex; align-items: center; gap: 0.6rem; }
+        .recs-table .champ img { width: 32px; height: 32px; border-radius: 4px; }
         .rec-pick {
-            background: transparent; color: inherit; border: none; padding: 0;
-            cursor: pointer; font-family: inherit; font-size: 0.95rem; text-align: left;
+            background: transparent;
+            color: inherit;
+            border: none;
+            padding: 0;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.95rem;
+            font-weight: 500;
+            text-align: left;
         }
-        .rec-pick:hover { color: #5b8def; text-decoration: underline; }
+        .rec-pick:hover { color: #5b8def; }
 
         .bans-row {
-            display: flex; gap: 1rem; align-items: end;
-            background: #18181b; border: 1px solid #2a2a2e; border-radius: 6px;
-            padding: 0.7rem 1rem;
+            display: flex;
+            gap: 1rem;
+            align-items: end;
+            background: #18181b;
+            border: 1px solid #2a2a2e;
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
         }
         .bans-row label { flex: 1; }
         .bans-row input { width: 100%; }
 
         .lcu-badge {
-            display: inline-block; margin-left: 0.5rem;
-            padding: 0.15rem 0.5rem; border-radius: 999px;
-            font-size: 0.72rem; font-weight: 500; letter-spacing: 0.3px;
+            display: inline-block;
+            padding: 0.3rem 0.7rem;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 500;
+            letter-spacing: 0.3px;
         }
         .lcu-unknown { background: #2a2a2e; color: #999; }
         .lcu-off     { background: #3a2222; color: #e85a5a; }
@@ -200,42 +348,108 @@
     </style>
 
     <script>
-        // Click "pick here" → set active slot, submit form
-        document.querySelectorAll('.slot-pick').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.getElementById('active-input').value = btn.dataset.active;
-                document.getElementById('draft-form').submit();
-            });
-        });
-        // Click a recommendation → fill the active slot, submit form
-        document.querySelectorAll('.rec-pick').forEach(btn => {
-            btn.addEventListener('click', () => {
+        // ---- AJAX refresh: re-render the draft form in place instead of
+        //      doing a full-page navigation. Preserves scroll position and
+        //      avoids the constant reload churn during champ select.
+        let inflight = null;
+        async function refreshDraft() {
+            if (inflight) inflight.abort();
+            const ctrl = new AbortController();
+            inflight = ctrl;
+
+            const form = document.getElementById('draft-form');
+            const params = new URLSearchParams();
+            // FormData picks up controls associated via form="draft-form" too
+            // (e.g. the tier select). Last-wins on duplicate keys.
+            for (const [k, v] of new FormData(form)) {
+                if (v !== '') params.set(k, v);
+            }
+            const url = `/draft?${params.toString()}`;
+            history.replaceState({}, '', url);
+
+            // Preserve recs scroll across the swap.
+            const oldScroll = document.querySelector('.recs-scroll');
+            const savedScrollTop = oldScroll ? oldScroll.scrollTop : 0;
+
+            try {
+                const r = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
+                if (!r.ok) return;
+                const html = await r.text();
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+                const newForm = doc.getElementById('draft-form');
+                if (newForm) {
+                    form.replaceWith(newForm);
+                    const newScroll = document.querySelector('.recs-scroll');
+                    if (newScroll) newScroll.scrollTop = savedScrollTop;
+                }
+            } catch (e) {
+                if (e.name !== 'AbortError') console.error('refresh error', e);
+            } finally {
+                if (inflight === ctrl) inflight = null;
+            }
+        }
+
+        // Event delegation: handlers stay live after refreshDraft swaps the form.
+        document.addEventListener('click', (e) => {
+            const slotPick = e.target.closest('.slot-pick');
+            if (slotPick) {
+                e.preventDefault();
+                document.getElementById('active-input').value = slotPick.dataset.active;
+                refreshDraft();
+                return;
+            }
+            const recPick = e.target.closest('.rec-pick');
+            if (recPick) {
+                e.preventDefault();
                 const active = document.getElementById('active-input').value;
                 const slot = document.querySelector(`input[name="my_${active}"]`);
                 if (slot) {
-                    slot.value = btn.dataset.name;
-                    document.getElementById('draft-form').submit();
+                    slot.value = recPick.dataset.name;
+                    refreshDraft();
                 }
-            });
+            }
         });
-        // Auto-submit when any text input changes (on blur)
-        document.querySelectorAll('input[type="text"]').forEach(el => {
-            el.addEventListener('change', () => document.getElementById('draft-form').submit());
+        document.addEventListener('change', (e) => {
+            if (e.target.matches('#draft-form input[type="text"], select[name="tier"]')) {
+                refreshDraft();
+            }
+        });
+        document.addEventListener('submit', (e) => {
+            if (e.target.id === 'draft-form') {
+                e.preventDefault();
+                refreshDraft();
+            }
         });
 
         // ---- LCU auto-sync ----
-        const lcuStatus  = document.getElementById('lcu-status');
-        const lcuToggle  = document.getElementById('lcu-sync');
-        let lastLcuHash  = '';
+        const lcuStatus = document.getElementById('lcu-status');
+        const lcuToggle = document.getElementById('lcu-sync');
 
         function setBadge(text, cls) {
             lcuStatus.textContent = text;
             lcuStatus.className = 'lcu-badge ' + cls;
         }
 
+        function teamFromInputs(prefix) {
+            const out = {};
+            document.querySelectorAll(`input[name^="${prefix}_"]`).forEach(inp => {
+                if (inp.value) out[inp.name.slice(prefix.length + 1)] = inp.value;
+            });
+            return out;
+        }
+        // Bans are sorted server-side; LCU returns them in action order.
+        function stateHash(my, enemy, bans) {
+            return JSON.stringify({ my, enemy, bans: [...(bans || [])].sort() });
+        }
+
         async function pollLcu() {
             try {
-                const r = await fetch('/api/lcu', { cache: 'no-store' });
+                const tierEl = document.querySelector('select[name="tier"]');
+                const tier = tierEl ? tierEl.value : '';
+                const lcuUrl = tier
+                    ? `/api/lcu?tier=${encodeURIComponent(tier)}`
+                    : '/api/lcu';
+                const r = await fetch(lcuUrl, { cache: 'no-store' });
                 const d = await r.json();
 
                 if (!d.connected) {
@@ -250,16 +464,17 @@
 
                 if (!lcuToggle.checked) return;
 
-                // Hash the relevant state. Resubmit only when it changes — so
-                // the page doesn't reload on every poll.
-                const hash = JSON.stringify({
-                    my: d.my_team, enemy: d.enemy_team,
-                    lane: d.my_lane, bans: d.bans,
-                });
-                if (hash === lastLcuHash) return;
-                lastLcuHash = hash;
-
                 const form = document.getElementById('draft-form');
+                const formBans = (form.querySelector('input[name="bans"]').value || '')
+                    .split(',').map(s => s.trim()).filter(Boolean);
+                const formHash = stateHash(
+                    teamFromInputs('my'), teamFromInputs('enemy'), formBans,
+                );
+                const lcuHash = stateHash(
+                    d.my_team || {}, d.enemy_team || {}, d.bans || [],
+                );
+                if (formHash === lcuHash) return;
+
                 for (const [pos, name] of Object.entries(d.my_team || {})) {
                     const inp = form.querySelector(`input[name="my_${pos}"]`);
                     if (inp) inp.value = name;
@@ -273,7 +488,7 @@
                 if (d.my_lane) {
                     document.getElementById('active-input').value = d.my_lane;
                 }
-                form.submit();
+                refreshDraft();
             } catch (e) {
                 console.error('LCU poll error', e);
             }
@@ -284,4 +499,5 @@
     </script>
 
     {% endif %}
+    </div>
 {% endblock %}

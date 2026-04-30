@@ -18,15 +18,30 @@ DB_PATH = APP_DIR / "lolalytics.db"
 
 DEFAULT_TIER = os.environ.get("LOLALYTICS_TIER", "emerald_plus")
 
-LANES = ["top", "jungle", "middle", "bottom", "support"]
+# Canonical position keys used everywhere the app refers to a role.
+POSITIONS: tuple[str, ...] = ("TOP", "JUNGLE", "MID", "BOT", "SUPPORT")
 
-# Map URL lane → display position (used in DB)
-LANE_TO_POSITION = {
+# Lolalytics-style URL lane names (lowercase) — used by the crawler/scraper
+# and as inputs to LANE_TO_POSITION below.
+LANES: list[str] = ["top", "jungle", "middle", "bottom", "support"]
+
+# Lolalytics URL lane → our canonical position.
+LANE_TO_POSITION: dict[str, str] = {
     "top":     "TOP",
     "jungle":  "JUNGLE",
     "middle":  "MID",
     "bottom":  "BOT",
     "support": "SUPPORT",
+}
+
+# League Client (LCU) assignedPosition strings → our canonical position.
+# Note "utility" — that's how Riot names the support slot.
+LCU_POSITION_MAP: dict[str, str] = {
+    "top":     "TOP",
+    "jungle":  "JUNGLE",
+    "middle":  "MID",
+    "bottom":  "BOT",
+    "utility": "SUPPORT",
 }
 
 # How much my pick choice in lane X depends on the enemy pick in lane Y.

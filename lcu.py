@@ -7,10 +7,13 @@ isn't in champ select.
 """
 
 import os
+from itertools import permutations
 from pathlib import Path
 from typing import Any
 
 import httpx
+
+import config
 
 
 # Default lockfile locations. The LEAGUE_INSTALL_PATH env var overrides these
@@ -22,14 +25,7 @@ LOCKFILE_PATHS = [
 ]
 
 
-# LCU's `assignedPosition` strings → our internal position keys.
-LCU_POSITION_MAP = {
-    "top":     "TOP",
-    "jungle":  "JUNGLE",
-    "middle":  "MID",
-    "bottom":  "BOT",
-    "utility": "SUPPORT",
-}
+LCU_POSITION_MAP = config.LCU_POSITION_MAP
 
 
 # Cache: numeric champion key → display name (from Data Dragon).
@@ -107,36 +103,134 @@ def champion_name_by_key(key: int, dd_version: str) -> str | None:
     return _champion_by_key.get(int(key))  # type: ignore[union-attr]
 
 
-def normalize_session(session: dict, dd_version: str) -> dict[str, Any]:
-    """Convert raw LCU session JSON into the shape the UI expects:
-        { connected, in_champ_select, my_lane, my_team, enemy_team, bans }
-    """
-    local_cell = session.get("localPlayerCellId", -1)
-    my_lane = ""
-    my_team: dict[str, str] = {}
-    enemy_team: dict[str, str] = {}
+def best_lane_assignment(
+    picks: list[tuple[int, str]],
+    tier: str,
+    conn,
+    occupied: set[str] | None = None,
+) -> dict[str, str]:
+    """Place each picked champion into a distinct unoccupied lane such that the
+    summed pickrate (in the given tier) is maximized. This is the assignment
+    problem; with ≤5 picks × ≤5 lanes a brute-force over permutations is fine
+    (≤120 candidates) and avoids pulling in scipy.
 
-    for player in session.get("myTeam", []) or []:
+    `picks` are (cell_id, champion_name) tuples — cell_id is used only for
+    deterministic tie-break ordering. `occupied` is the set of lanes already
+    filled by teammates whose `assignedPosition` was provided by Riot; those
+    lanes are excluded from inference so we never overwrite known data.
+
+    Returns POSITION → champion_name for the placements made.
+    """
+    occupied_set = set(occupied or ())
+    available = [r for r in config.POSITIONS if r not in occupied_set]
+    if not picks or not available:
+        return {}
+
+    picks = sorted(picks, key=lambda p: p[0])
+    names = [name for _, name in picks]
+
+    placeholders = ",".join("?" for _ in names)
+    rows = conn.execute(
+        f"""
+        SELECT champion_name, lane, COALESCE(pickrate, 0) AS pr
+          FROM champion_stats
+         WHERE tier = ?
+           AND champion_name IN ({placeholders})
+        """,
+        (tier, *names),
+    ).fetchall()
+
+    pr: dict[tuple[str, str], float] = {}
+    for r in rows:
+        pr[(r["champion_name"], r["lane"])] = r["pr"] or 0.0
+
+    n = min(len(picks), len(available))
+    best_score = -1.0
+    best: dict[str, str] = {}
+    for combo in permutations(available, n):
+        s = sum(pr.get((names[i], combo[i]), 0.0) for i in range(n))
+        if s > best_score:
+            best_score = s
+            best = {combo[i]: names[i] for i in range(n)}
+    return best
+
+
+def _build_team(
+    players: list[dict],
+    dd_version: str,
+    tier: str | None,
+    conn,
+) -> dict[str, str]:
+    """Build {POSITION: champion_name} for one team. Honors `assignedPosition`
+    when Riot provides it, and infers the most-probable composition for the
+    remaining picks via `best_lane_assignment`."""
+    assigned: dict[str, str] = {}
+    unassigned: list[tuple[int, str]] = []
+
+    for player in players or []:
         # championPickIntent = hover (live preview); championId = locked pick.
         cid = player.get("championId") or player.get("championPickIntent") or 0
-        pos = LCU_POSITION_MAP.get(player.get("assignedPosition") or "")
-        if not pos:
-            continue
-        if cid:
-            name = champion_name_by_key(cid, dd_version)
-            if name:
-                my_team[pos] = name
-        if player.get("cellId") == local_cell:
-            my_lane = pos
-
-    for player in session.get("theirTeam", []) or []:
-        cid = player.get("championId") or player.get("championPickIntent") or 0
-        pos = LCU_POSITION_MAP.get(player.get("assignedPosition") or "")
-        if not pos or not cid:
+        if not cid:
             continue
         name = champion_name_by_key(cid, dd_version)
-        if name:
-            enemy_team[pos] = name
+        if not name:
+            continue
+        pos = LCU_POSITION_MAP.get(player.get("assignedPosition") or "")
+        if pos:
+            assigned[pos] = name
+        else:
+            unassigned.append((player.get("cellId", 0), name))
+
+    if unassigned and tier and conn is not None:
+        inferred = best_lane_assignment(
+            unassigned, tier, conn, occupied=set(assigned.keys()),
+        )
+        assigned.update(inferred)
+
+    return assigned
+
+
+def normalize_session(
+    session: dict,
+    dd_version: str,
+    tier: str | None = None,
+    conn=None,
+) -> dict[str, Any]:
+    """Convert raw LCU session JSON into the shape the UI expects:
+        { connected, in_champ_select, my_lane, my_team, enemy_team, bans }
+
+    When `tier` and `conn` are provided, picks lacking `assignedPosition`
+    (common in Blind/ARAM, and frequent during the hover phase even in
+    role-assigned queues) are placed into lanes via the most-probable
+    composition. Without those args, such picks are dropped — preserving
+    the original conservative behavior.
+    """
+    local_cell = session.get("localPlayerCellId", -1)
+    my_team_players = session.get("myTeam", []) or []
+    enemy_team_players = session.get("theirTeam", []) or []
+
+    my_team = _build_team(my_team_players, dd_version, tier, conn)
+    enemy_team = _build_team(enemy_team_players, dd_version, tier, conn)
+
+    # Determine my_lane: prefer Riot's assignedPosition for the local cell;
+    # if absent (e.g. blind pick), look up our own champion in the inferred
+    # composition.
+    my_lane = ""
+    for player in my_team_players:
+        if player.get("cellId") != local_cell:
+            continue
+        pos = LCU_POSITION_MAP.get(player.get("assignedPosition") or "")
+        if pos:
+            my_lane = pos
+        else:
+            cid = player.get("championId") or player.get("championPickIntent") or 0
+            name = champion_name_by_key(cid, dd_version) if cid else None
+            if name:
+                for p, n in my_team.items():
+                    if n == name:
+                        my_lane = p
+                        break
+        break
 
     bans: list[str] = []
     for action_group in session.get("actions") or []:
@@ -159,7 +253,7 @@ def normalize_session(session: dict, dd_version: str) -> dict[str, Any]:
     }
 
 
-def get_state(dd_version: str) -> dict[str, Any]:
+def get_state(dd_version: str, tier: str | None = None, conn=None) -> dict[str, Any]:
     """One-shot: returns a fully-normalized state dict suitable for the API.
     Always returns a dict (never None) so the front-end has something to render.
     """
@@ -168,4 +262,4 @@ def get_state(dd_version: str) -> dict[str, Any]:
     raw = get_champ_select_session()
     if raw is None:
         return {"connected": True, "in_champ_select": False}
-    return normalize_session(raw, dd_version)
+    return normalize_session(raw, dd_version, tier=tier, conn=conn)
