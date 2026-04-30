@@ -62,6 +62,29 @@
                 <h2>Recommendations <span class="meta-inline">— {{ active }}</span></h2>
                 <div class="recs-scroll">
                 {% if candidates %}
+                {% macro breakdown_section(items, key, total, label) %}
+                <div class="bk-section">
+                    <div class="bk-section-title">
+                        <span>{{ label }}</span>
+                        <span class="bk-section-total {% if total > 0 %}good{% elif total < 0 %}bad{% endif %}">{% if total >= 0 %}+{% endif %}{{ "%.2f"|format(total) }}</span>
+                    </div>
+                    {% if items %}
+                    <table class="bk-table">
+                        {% for it in items %}
+                        <tr>
+                            <td class="bk-name">{{ it[key] }}</td>
+                            <td class="bk-lane">{{ it.lane }}</td>
+                            <td class="bk-wr">{% if it.winrate is not none %}{{ "%.2f"|format(it.winrate) }}%{% else %}—{% endif %}</td>
+                            <td class="bk-games">{% if it.games %}{{ "{:,}".format(it.games) }}g{% else %}<span class="bk-faded">no data</span>{% endif %}</td>
+                            <td class="bk-contrib {% if it.contrib > 0 %}good{% elif it.contrib < 0 %}bad{% endif %}">{% if it.contrib >= 0 %}+{% endif %}{{ "%.2f"|format(it.contrib) }}</td>
+                        </tr>
+                        {% endfor %}
+                    </table>
+                    {% else %}
+                    <div class="bk-empty">No picks yet</div>
+                    {% endif %}
+                </div>
+                {% endmacro %}
                 <table class="recs-table">
                     <thead>
                         <tr>
@@ -70,25 +93,44 @@
                             <th class="num" title="Champion's overall winrate in this lane × tier">Base</th>
                             <th class="num" title="Sum of weighted counter-matchup deltas vs picked enemies">vs</th>
                             <th class="num" title="Sum of weighted synergy deltas with picked teammates">w/</th>
+                            <th class="num" title="Weighted exposure to popular bad matchups in this lane × tier (lower = safer blind pick)">Risk</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for c in candidates[:30] %}
-                        <tr>
+                        <tr class="rec-row">
                             <td class="champ">
                                 <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champ_id(c.champion_name) }}.png"
                                      alt="" loading="lazy" onerror="this.style.visibility='hidden'">
                                 <button type="button" class="rec-pick" data-name="{{ c.champion_name }}">{{ c.champion_name }}</button>
+                                <div class="rec-breakdown-src" hidden>
+                                    <div class="bk-header">
+                                        <strong>{{ c.champion_name }}</strong>
+                                        <span class="bk-fit">Fit <span class="winrate {% if c.fit >= 52 %}good{% elif c.fit <= 48 %}bad{% endif %}">{{ "%.2f"|format(c.fit) }}</span></span>
+                                    </div>
+                                    <div class="bk-base">Base WR {{ "%.2f"|format(c.base) }} · {{ active }} · {{ tier }}</div>
+                                    {{ breakdown_section(c.counter_breakdown, 'opponent', c.counter_total, 'vs Enemies') }}
+                                    {{ breakdown_section(c.synergy_breakdown, 'ally', c.synergy_total, 'w/ Allies') }}
+                                    <div class="bk-risk" title="Weighted exposure to popular bad matchups in this lane (lower = safer blind pick)">
+                                        Blind risk
+                                        <span class="{{ c.risk_class }}">{{ "%.2f"|format(c.blind_risk) }}</span>
+                                    </div>
+                                </div>
                             </td>
                             <td class="num winrate {% if c.fit >= 52 %}good{% elif c.fit <= 48 %}bad{% endif %}">
                                 {{ "%.2f"|format(c.fit) }}
                             </td>
-                            <td class="num">{{ "%.2f"|format(c.base) }}</td>
+                            <td class="num winrate {% if c.base >= 52 %}good{% elif c.base <= 48 %}bad{% endif %}">
+                                {{ "%.2f"|format(c.base) }}
+                            </td>
                             <td class="num {% if c.counter_total > 0 %}good{% elif c.counter_total < 0 %}bad{% endif %}">
                                 {% if c.counter_total >= 0 %}+{% endif %}{{ "%.2f"|format(c.counter_total) }}
                             </td>
                             <td class="num {% if c.synergy_total > 0 %}good{% elif c.synergy_total < 0 %}bad{% endif %}">
                                 {% if c.synergy_total >= 0 %}+{% endif %}{{ "%.2f"|format(c.synergy_total) }}
+                            </td>
+                            <td class="num {{ c.risk_class }}">
+                                {{ "%.2f"|format(c.blind_risk) }}
                             </td>
                         </tr>
                         {% endfor %}
@@ -133,6 +175,8 @@
             <button type="submit">Apply</button>
         </div>
     </form>
+
+    <div id="rec-tooltip" class="rec-tooltip" hidden></div>
 
     <datalist id="champ-list">
         {% for n in champ_names %}<option value="{{ n }}">{% endfor %}
@@ -345,6 +389,69 @@
         .lcu-off     { background: #3a2222; color: #e85a5a; }
         .lcu-idle    { background: #2a2a3a; color: #aaa; }
         .lcu-live    { background: #1f3a25; color: #5cd65c; }
+
+        /* Hover tooltip showing the per-pick breakdown for a recommendation. */
+        .rec-tooltip {
+            position: fixed;
+            z-index: 100;
+            background: #18181b;
+            border: 1px solid #34343a;
+            border-radius: 8px;
+            padding: 0.7rem 0.85rem;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+            min-width: 320px;
+            max-width: 420px;
+            pointer-events: none;
+            font-size: 0.85rem;
+        }
+        .rec-tooltip[hidden] { display: none; }
+        .rec-row { cursor: default; }
+
+        .bk-header {
+            display: flex; justify-content: space-between; align-items: baseline;
+            gap: 1rem; margin-bottom: 0.15rem;
+        }
+        .bk-header strong { font-size: 1rem; font-weight: 600; }
+        .bk-fit { color: #888; font-size: 0.78rem; }
+        .bk-base { color: #777; font-size: 0.75rem; margin-bottom: 0.55rem; }
+
+        .bk-section { margin-top: 0.55rem; }
+        .bk-section-title {
+            display: flex; justify-content: space-between; align-items: baseline;
+            color: #999; font-size: 0.7rem; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.8px;
+            border-bottom: 1px solid #2a2a2e;
+            padding-bottom: 0.25rem; margin-bottom: 0.3rem;
+        }
+        .bk-section-total {
+            font-weight: 600; letter-spacing: 0; text-transform: none;
+            font-size: 0.82rem; font-variant-numeric: tabular-nums;
+        }
+        .bk-table { width: 100%; border-collapse: collapse; }
+        .bk-table td {
+            padding: 0.18rem 0.35rem;
+            font-variant-numeric: tabular-nums;
+        }
+        .bk-table td:first-child { padding-left: 0; }
+        .bk-table td:last-child  { padding-right: 0; }
+        .bk-name { color: #e6e6e6; font-size: 0.86rem; }
+        .bk-lane { color: #888; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.4px; }
+        .bk-wr { color: #aaa; text-align: right; font-size: 0.82rem; }
+        .bk-games { color: #666; font-size: 0.72rem; text-align: right; }
+        .bk-faded { color: #555; font-style: italic; }
+        .bk-contrib { font-weight: 600; text-align: right; font-size: 0.86rem; }
+        .bk-empty { color: #666; font-size: 0.78rem; padding: 0.15rem 0; }
+        .bk-risk {
+            display: flex; justify-content: space-between; align-items: baseline;
+            margin-top: 0.55rem; padding-top: 0.4rem;
+            border-top: 1px solid #2a2a2e;
+            color: #999; font-size: 0.75rem; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.7px;
+        }
+        .bk-risk span {
+            font-weight: 600; letter-spacing: 0; text-transform: none;
+            font-size: 0.85rem; font-variant-numeric: tabular-nums;
+        }
     </style>
 
     <script>
@@ -421,6 +528,54 @@
             }
         });
 
+        // ---- Hover tooltip: per-row breakdown of fit-score contributors ----
+        const recTooltip = document.getElementById('rec-tooltip');
+        let recHoverRow = null;
+
+        function positionRecTooltip(row) {
+            const rect = row.getBoundingClientRect();
+            // Reveal hidden first so we can measure.
+            recTooltip.hidden = false;
+            const tip = recTooltip.getBoundingClientRect();
+            const margin = 12;
+            // Default: place to the right of the row.
+            let left = rect.right + margin;
+            if (left + tip.width > window.innerWidth - 8) {
+                // Not enough room on the right; fall back to the left.
+                left = rect.left - tip.width - margin;
+                if (left < 8) left = 8;
+            }
+            // Vertically center on the row, clamped to viewport.
+            let top = rect.top + rect.height / 2 - tip.height / 2;
+            top = Math.max(8, Math.min(top, window.innerHeight - tip.height - 8));
+            recTooltip.style.left = `${left}px`;
+            recTooltip.style.top = `${top}px`;
+        }
+
+        document.addEventListener('mouseover', (e) => {
+            const row = e.target.closest('.rec-row');
+            if (!row || row === recHoverRow) return;
+            const src = row.querySelector('.rec-breakdown-src');
+            if (!src) return;
+            recTooltip.innerHTML = src.innerHTML;
+            recHoverRow = row;
+            positionRecTooltip(row);
+        });
+        document.addEventListener('mouseout', (e) => {
+            if (!recHoverRow) return;
+            // Still inside the same row? Ignore — only hide on real exit.
+            if (e.relatedTarget && recHoverRow.contains(e.relatedTarget)) return;
+            recTooltip.hidden = true;
+            recHoverRow = null;
+        });
+        // The recs list scrolls; hide the (now-stale-positioned) tooltip on scroll.
+        document.addEventListener('scroll', () => {
+            if (!recTooltip.hidden) {
+                recTooltip.hidden = true;
+                recHoverRow = null;
+            }
+        }, true);
+
         // ---- LCU auto-sync ----
         const lcuStatus = document.getElementById('lcu-status');
         const lcuToggle = document.getElementById('lcu-sync');
@@ -430,16 +585,17 @@
             lcuStatus.className = 'lcu-badge ' + cls;
         }
 
-        function teamFromInputs(prefix) {
-            const out = {};
-            document.querySelectorAll(`input[name^="${prefix}_"]`).forEach(inp => {
-                if (inp.value) out[inp.name.slice(prefix.length + 1)] = inp.value;
-            });
-            return out;
-        }
-        // Bans are sorted server-side; LCU returns them in action order.
-        function stateHash(my, enemy, bans) {
-            return JSON.stringify({ my, enemy, bans: [...(bans || [])].sort() });
+        // Track what LCU last reported for each slot. The auto-sync only
+        // overwrites a slot when the form value still matches what LCU last
+        // wrote (or is empty). Anything else means the user typed an override
+        // — leave it alone until they clear the field.
+        const lcuApplied = { my: {}, enemy: {}, bans: '', lane: '' };
+
+        function syncSlot(inp, lcuValue, lastApplied) {
+            const overridden = inp.value !== '' && inp.value !== lastApplied;
+            if (overridden || inp.value === lcuValue) return false;
+            inp.value = lcuValue;
+            return true;
         }
 
         async function pollLcu() {
@@ -465,30 +621,38 @@
                 if (!lcuToggle.checked) return;
 
                 const form = document.getElementById('draft-form');
-                const formBans = (form.querySelector('input[name="bans"]').value || '')
-                    .split(',').map(s => s.trim()).filter(Boolean);
-                const formHash = stateHash(
-                    teamFromInputs('my'), teamFromInputs('enemy'), formBans,
-                );
-                const lcuHash = stateHash(
-                    d.my_team || {}, d.enemy_team || {}, d.bans || [],
-                );
-                if (formHash === lcuHash) return;
+                let dirty = false;
+                const positions = ['TOP', 'JUNGLE', 'MID', 'BOT', 'SUPPORT'];
 
-                for (const [pos, name] of Object.entries(d.my_team || {})) {
-                    const inp = form.querySelector(`input[name="my_${pos}"]`);
-                    if (inp) inp.value = name;
+                for (const [prefix, team, applied] of [
+                    ['my',    d.my_team    || {}, lcuApplied.my],
+                    ['enemy', d.enemy_team || {}, lcuApplied.enemy],
+                ]) {
+                    for (const pos of positions) {
+                        const inp = form.querySelector(`input[name="${prefix}_${pos}"]`);
+                        if (!inp) continue;
+                        const lcuValue = team[pos] || '';
+                        if (syncSlot(inp, lcuValue, applied[pos] || '')) dirty = true;
+                        applied[pos] = lcuValue;
+                    }
                 }
-                for (const [pos, name] of Object.entries(d.enemy_team || {})) {
-                    const inp = form.querySelector(`input[name="enemy_${pos}"]`);
-                    if (inp) inp.value = name;
-                }
+
+                // Bans: sort to a canonical order so LCU's pick-order list and
+                // the server's sorted output compare equal.
+                const lcuBansSorted = (d.bans || []).slice().sort().join(', ');
                 const bansInp = form.querySelector('input[name="bans"]');
-                if (bansInp) bansInp.value = (d.bans || []).join(', ');
-                if (d.my_lane) {
-                    document.getElementById('active-input').value = d.my_lane;
+                if (bansInp) {
+                    if (syncSlot(bansInp, lcuBansSorted, lcuApplied.bans)) dirty = true;
+                    lcuApplied.bans = lcuBansSorted;
                 }
-                refreshDraft();
+
+                const activeInp = document.getElementById('active-input');
+                if (activeInp && d.my_lane) {
+                    if (syncSlot(activeInp, d.my_lane, lcuApplied.lane)) dirty = true;
+                    lcuApplied.lane = d.my_lane;
+                }
+
+                if (dirty) refreshDraft();
             } catch (e) {
                 console.error('LCU poll error', e);
             }
