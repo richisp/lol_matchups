@@ -85,7 +85,12 @@ def get_available_tiers() -> list[str]:
     return _available_tiers_cache
 
 
-def compute_blind_risk(conn, lane: str, tier: str) -> dict[str, float]:
+def compute_blind_risk(
+    conn,
+    lane: str,
+    tier: str,
+    known_enemy_lanes: set[str] | None = None,
+) -> dict[str, float]:
     """For each champion in `lane × tier`, compute a blind-pick risk score.
 
     For each enemy lane L:
@@ -95,11 +100,16 @@ def compute_blind_risk(conn, lane: str, tier: str) -> dict[str, float]:
 
     Lower = safer blind pick (less popular bad-matchup exposure, weighted by
     how much each enemy lane impacts your pick choice).
+
+    Lanes already filled by the enemy are not "blind" — the matchup is known
+    and reflected in the `vs` column. Pass them via `known_enemy_lanes` to
+    exclude their contribution from the score.
     """
     if lane not in config.COUNTER_WEIGHTS:
         return {}
     weights = config.COUNTER_WEIGHTS[lane]
     threshold = config.BLIND_PICK_BAD_WR_THRESHOLD
+    known = known_enemy_lanes or set()
 
     rows = conn.execute(
         """
@@ -118,6 +128,8 @@ def compute_blind_risk(conn, lane: str, tier: str) -> dict[str, float]:
 
     scores: dict[str, float] = {}
     for r in rows:
+        if r["opponent_lane"] in known:
+            continue
         weight = weights.get(r["opponent_lane"], 0) / 100.0
         scores[r["champion_name"]] = scores.get(r["champion_name"], 0.0) + r["bad_pr"] * weight
     return scores
@@ -293,6 +305,12 @@ def compute_draft_scores(
     _fetch_matchups(enemy_team, "counter")
     _fetch_matchups(my_team, "synergy")
 
+    # Lanes the enemy has already filled aren't "blind" — exclude them from
+    # the risk score so it shrinks toward 0 as the enemy team locks in.
+    risk_scores = compute_blind_risk(
+        conn, lane, tier, known_enemy_lanes=set(enemy_team.keys()),
+    )
+
     out = []
     for c in candidates:
         name = c["champion_name"]
@@ -349,9 +367,26 @@ def compute_draft_scores(
             "counter_total": counter_total,
             "synergy_total": synergy_total,
             "fit": fit,
+            "blind_risk": risk_scores.get(name, 0.0),
             "counter_breakdown": counter_breakdown,
             "synergy_breakdown": synergy_breakdown,
         })
+
+    # Color blind_risk by percentile within this lane × tier — fixed thresholds
+    # don't work because risk magnitudes vary a lot across lanes (TOP min=10
+    # while SUPPORT min=1, etc.). Bottom quartile = good, top quartile = bad.
+    if out:
+        sorted_risks = sorted(r["blind_risk"] for r in out)
+        n = len(sorted_risks)
+        p25 = sorted_risks[max(0, n // 4 - 1)]
+        p75 = sorted_risks[min(n - 1, 3 * n // 4)]
+        for r in out:
+            if r["blind_risk"] <= p25:
+                r["risk_class"] = "good"
+            elif r["blind_risk"] >= p75:
+                r["risk_class"] = "bad"
+            else:
+                r["risk_class"] = ""
 
     out.sort(key=lambda r: r["fit"], reverse=True)
     return out
