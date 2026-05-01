@@ -102,26 +102,42 @@ def _spawn_swap(current_exe: Path, new_exe: Path) -> None:
     update silently fails.
     """
     pid = os.getpid()
+    exe_name = current_exe.name  # e.g. lol-draft-helper.exe
     bat = current_exe.parent / ".update.bat"
-    # NB: `if errorlevel N` is "errorlevel >= N", so `not errorlevel 1` means
-    #     errorlevel == 0 (= command succeeded / find matched).
+    # Notes:
+    # - `if errorlevel N` means "errorlevel >= N", so `not errorlevel 1` means
+    #   errorlevel == 0 (find matched / command succeeded).
+    # - We filter tasklist by BOTH PID and image name. Windows recycles PIDs
+    #   aggressively, so the same PID can quickly land on an unrelated process
+    #   and our wait would loop forever. Adding the image-name filter pins the
+    #   check to "our app, not just our old PID".
+    # - WAIT_LIMIT caps the wait so a stuck script can't run indefinitely.
     bat.write_text(
         f"""@echo off
 setlocal
 set "NEW_EXE={new_exe}"
 set "CUR_EXE={current_exe}"
+set "EXE_NAME={exe_name}"
 set "LOG=%~dp0.update.log"
 set MAX_RETRIES=30
+set WAIT_LIMIT=60
 
-(echo [%date% %time%] update.bat start, waiting for PID {pid}) >> "%LOG%"
+(echo [%date% %time%] update.bat start, waiting for PID {pid} / %EXE_NAME%) >> "%LOG%"
 
+set WAITED=0
 :wait
-tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul
-if not errorlevel 1 (
-    timeout /t 1 /nobreak >nul
-    goto wait
+tasklist /FI "PID eq {pid}" /FI "IMAGENAME eq %EXE_NAME%" 2>nul | find "{pid}" >nul
+if errorlevel 1 goto wait_done
+set /a WAITED+=1
+if %WAITED% GEQ %WAIT_LIMIT% (
+    (echo [%date% %time%] PID still alive after %WAIT_LIMIT%s, proceeding anyway) >> "%LOG%"
+    goto wait_done
 )
-(echo [%date% %time%] PID gone, attempting swap) >> "%LOG%"
+timeout /t 1 /nobreak >nul
+goto wait
+
+:wait_done
+(echo [%date% %time%] proceeding to swap) >> "%LOG%"
 
 set RETRIES=0
 :try_move
