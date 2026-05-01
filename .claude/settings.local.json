@@ -3,7 +3,9 @@
     "allow": [
       "Bash(python -c \"import config, db, lcu, app; print\\('OK'\\)\")",
       "Bash(.venv/Scripts/python -c \"import config, db, lcu, app; print\\('OK'\\)\")",
-      "Bash(.venv/Scripts/python -c ' *)"
+      "Bash(.venv/Scripts/python -c ' *)",
+      "Bash(.venv/Scripts/python .github/scripts/db_version.py)",
+      "Bash(.venv/Scripts/python -c \"from launcher import main; print\\('launcher OK'\\)\")"
     ]
   }
 }

@@ -1,0 +1,106 @@
+name: Crawl lolalytics
+
+on:
+  schedule:
+    # 04:00 UTC daily. GitHub may delay scheduled runs by a few minutes
+    # during periods of high load — this is fine for our purposes.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Crawl mode'
+        required: true
+        default: full
+        type: choice
+        options:
+          - full       # wipe scrape_runs, recrawl everything
+          - failures   # only retry combos previously marked error/empty
+
+permissions:
+  contents: write
+
+concurrency:
+  group: crawl
+  cancel-in-progress: true
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pip deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install playwright
+
+      - name: Cache Playwright browser binaries
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          # Bump the suffix to invalidate. Playwright's chromium is pinned by
+          # the installed playwright package version; keying off the lock makes
+          # the cache self-invalidate on upgrade.
+          key: pw-chromium-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+
+      - name: Install Chromium (full)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: playwright install --with-deps chromium
+
+      - name: Install Chromium system deps (cache hit)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: playwright install-deps chromium
+
+      - name: Seed DB from prior db-latest release (if any)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view db-latest >/dev/null 2>&1; then
+            echo "Prior db-latest release found — downloading as seed."
+            gh release download db-latest --pattern lolalytics.db --clobber
+          else
+            echo "No prior release — using the DB committed in the repo as seed."
+          fi
+          ls -la lolalytics.db
+
+      - name: Reset crawl state (full mode)
+        if: ${{ github.event.inputs.mode != 'failures' }}
+        run: |
+          # Wipe scrape_runs so already-OK combos are re-crawled with fresh
+          # data. The store_scrape_result fix wholesale-replaces stale matchup
+          # rows on each champ-lane refresh, so we don't accumulate cruft.
+          sqlite3 lolalytics.db "DELETE FROM scrape_runs;"
+
+      - name: Reset failed/empty entries (failures mode)
+        if: ${{ github.event.inputs.mode == 'failures' }}
+        run: |
+          sqlite3 lolalytics.db "DELETE FROM scrape_runs WHERE status IN ('error', 'empty');"
+
+      - name: Crawl
+        env:
+          HEADLESS: '1'
+        run: python crawl_champions.py
+
+      - name: Generate version metadata + release body
+        run: python .github/scripts/db_version.py
+
+      - name: Upload to db-latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: db-latest
+          name: Latest DB snapshot
+          body_path: db-version-body.md
+          files: |
+            lolalytics.db
+            db-version.json
+          # Don't make this the "Latest" release the GitHub UI surfaces — that
+          # designation belongs to the app releases (vX.Y.Z).
+          make_latest: 'false'
