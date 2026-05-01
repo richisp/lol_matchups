@@ -138,7 +138,10 @@ goto try_move
 
 :move_done
 (echo [%date% %time%] swap done, refreshing icon cache + relaunching) >> "%LOG%"
-ie4uinit.exe -show >nul 2>&1
+:: Tell Explorer the .exe's resources may have changed so it reloads the icon
+:: instead of serving the cached one. SHCNE_ASSOCCHANGED is broader than
+:: ie4uinit -show but doesn't kill any Explorer windows.
+powershell -NoProfile -NonInteractive -Command "Add-Type -Namespace W -Name S -MemberDefinition '[System.Runtime.InteropServices.DllImport(\"shell32.dll\")] public static extern void SHChangeNotify(int eventId, uint flags, System.IntPtr item1, System.IntPtr item2);'; [W.S]::SHChangeNotify(0x08000000, 0, [System.IntPtr]::Zero, [System.IntPtr]::Zero)" >nul 2>&1
 start "" "%CUR_EXE%"
 del "%~f0"
 """,
