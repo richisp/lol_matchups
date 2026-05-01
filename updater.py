@@ -44,16 +44,24 @@ def _parse(v: str) -> tuple[int, ...]:
     return tuple(int(p) for p in v.split("."))
 
 
-def _list_app_releases(repo: str, timeout: float) -> list[dict]:
-    """Return all releases tagged like vX.Y.Z, newest first."""
+def _latest_app_release(repo: str, timeout: float) -> dict | None:
+    """Return the release GitHub marks as 'latest'.
+
+    We deliberately use the dedicated /releases/latest endpoint rather than
+    listing /releases and taking [0]: the list endpoint is eventually
+    consistent and has been observed to omit a just-published release for
+    several minutes, while /releases/latest is updated immediately when a
+    workflow sets `make_latest: true`.
+    """
     r = httpx.get(
-        f"https://api.github.com/repos/{repo}/releases",
+        f"https://api.github.com/repos/{repo}/releases/latest",
         timeout=timeout,
-        params={"per_page": 30},
         follow_redirects=True,
     )
+    if r.status_code == 404:
+        return None
     r.raise_for_status()
-    return [rel for rel in r.json() if VERSION_RE.match(rel.get("tag_name", ""))]
+    return r.json()
 
 
 PORTABLE_EXE_NAME = "lol-draft-helper.exe"
@@ -158,18 +166,18 @@ def check_and_apply(repo: str | None = None, timeout: float = 5.0) -> bool:
 
     repo = repo or config.GITHUB_REPO
     try:
-        releases = _list_app_releases(repo, timeout)
+        latest = _latest_app_release(repo, timeout)
     except (httpx.HTTPError, ValueError) as e:
         log.info("updater: release lookup failed — %s", e)
         return False
-    if not releases:
-        log.info("updater: no app releases tagged vX.Y.Z found.")
+    if not latest:
+        log.info("updater: no /releases/latest available.")
         return False
 
-    latest = releases[0]
-    tag = latest["tag_name"]
+    tag = latest.get("tag_name", "")
     m = VERSION_RE.match(tag)
     if not m:
+        log.info("updater: latest tag %r isn't vX.Y.Z — skipping.", tag)
         return False
     remote_v = m.group(1)
     if _parse(remote_v) <= _parse(__version__):
