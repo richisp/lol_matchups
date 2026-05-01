@@ -86,20 +86,52 @@ def _download(url: str, dest: Path, timeout: float) -> None:
 
 def _spawn_swap(current_exe: Path, new_exe: Path) -> None:
     """Spawn a detached cmd that waits for us to exit, swaps in the new .exe,
-    and relaunches. We then exit ourselves."""
+    and relaunches. We then exit ourselves.
+
+    The swap can race with antivirus / Windows Search holding a transient file
+    lock on the just-exited .exe, so the script retries move several times and
+    logs to .update.log alongside the .exe — that file is invaluable when an
+    update silently fails.
+    """
     pid = os.getpid()
     bat = current_exe.parent / ".update.bat"
-    # The /min keeps the cmd window minimized; >nul redirects suppress output.
+    # NB: `if errorlevel N` is "errorlevel >= N", so `not errorlevel 1` means
+    #     errorlevel == 0 (= command succeeded / find matched).
     bat.write_text(
         f"""@echo off
+setlocal
+set "NEW_EXE={new_exe}"
+set "CUR_EXE={current_exe}"
+set "LOG=%~dp0.update.log"
+set MAX_RETRIES=30
+
+(echo [%date% %time%] update.bat start, waiting for PID {pid}) >> "%LOG%"
+
 :wait
 tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul
 if not errorlevel 1 (
     timeout /t 1 /nobreak >nul
     goto wait
 )
-move /Y "{new_exe}" "{current_exe}" >nul
-start "" "{current_exe}"
+(echo [%date% %time%] PID gone, attempting swap) >> "%LOG%"
+
+set RETRIES=0
+:try_move
+move /Y "%NEW_EXE%" "%CUR_EXE%" >> "%LOG%" 2>&1
+if not errorlevel 1 goto move_done
+set /a RETRIES+=1
+if %RETRIES% GEQ %MAX_RETRIES% (
+    (echo [%date% %time%] giving up after %MAX_RETRIES% retries) >> "%LOG%"
+    exit /b 1
+)
+(echo [%date% %time%] move failed, retry %RETRIES%) >> "%LOG%"
+timeout /t 1 /nobreak >nul
+goto try_move
+
+:move_done
+(echo [%date% %time%] swap done, refreshing icon cache + relaunching) >> "%LOG%"
+ie4uinit.exe -show >nul 2>&1
+start "" "%CUR_EXE%"
 del "%~f0"
 """,
         encoding="utf-8",
