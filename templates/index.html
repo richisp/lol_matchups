@@ -1,67 +1,66 @@
 {% extends "base.html" %}
 {% block title %}Champion winrates — LoL Matchups{% endblock %}
 {% block body %}
-    <h1>Champion winrates ({{ lane }})</h1>
+    <h1>Champion winrates ({{ lane_label }})</h1>
 
     {% if error %}
         <p class="empty">{{ error }}</p>
     {% else %}
-    <form method="get" class="filter-form">
-        <label>Lane
-            <select name="lane">
-                {% for p in positions %}
-                    <option value="{{ p }}" {% if p == lane %}selected{% endif %}>{{ p }}</option>
-                {% endfor %}
-            </select>
-        </label>
+    <form method="get" id="filters" class="filter-form">
+        <input type="hidden" name="lane" value="{{ lane }}" id="lane-input">
+        <input type="hidden" name="sort" value="{{ sort_by }}" id="sort-input">
+
+        <div class="role-buttons">
+            <button type="button" class="role-btn role-btn-all {% if lane == lane_all %}active{% endif %}" data-lane="{{ lane_all }}" title="All roles">
+                <span>All</span>
+            </button>
+            {% for p in positions %}
+            <button type="button" class="role-btn {% if lane == p %}active{% endif %}" data-lane="{{ p }}" title="{{ p }}">
+                <img src="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-static-assets/global/default/svg/position-{{ role_icon_slug(p) }}.svg" alt="">
+                <span>{{ p }}</span>
+            </button>
+            {% endfor %}
+        </div>
+
         <label>Tier
-            <select name="tier">
+            <select name="tier" id="tier-select">
                 {% for t in available_tiers %}
                     <option value="{{ t }}" {% if t == tier %}selected{% endif %}>{{ t }}</option>
                 {% endfor %}
             </select>
         </label>
-        <label>Sort by
-            <select name="sort">
-                <option value="winrate"     {% if sort_by == 'winrate'     %}selected{% endif %}>Winrate</option>
-                <option value="pickrate"    {% if sort_by == 'pickrate'    %}selected{% endif %}>Pick rate</option>
-                <option value="banrate"     {% if sort_by == 'banrate'     %}selected{% endif %}>Ban rate</option>
-                <option value="games"       {% if sort_by == 'games'       %}selected{% endif %}>Games</option>
-                <option value="blind_risk"  {% if sort_by == 'blind_risk'  %}selected{% endif %}>Blind risk (low = safer)</option>
-                <option value="name"        {% if sort_by == 'name'        %}selected{% endif %}>Name</option>
-            </select>
-        </label>
-        <button type="submit">Apply</button>
     </form>
 
     <p class="meta">
-        {{ champions|length }} champions in {{ lane }} · tier={{ tier }}
+        {{ champions|length }} champion{{ '' if champions|length == 1 else 's' }} · {{ lane_label }} · tier={{ tier }}
     </p>
 
     {% if champions %}
-    <table>
+    <table class="sortable">
         <thead>
             <tr>
-                <th>Champion</th>
-                <th class="num">Tier</th>
-                <th class="num">Winrate</th>
-                <th class="num">Pick rate</th>
-                <th class="num">Ban rate</th>
-                <th class="num">Games</th>
-                <th class="num" title="Weighted exposure to popular bad matchups (lower = safer blind pick)">Blind risk</th>
+                <th data-sort="role" class="th-sort {% if sort_key == 'role' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Role</th>
+                <th data-sort="name" class="th-sort {% if sort_key == 'name' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Champion</th>
+                <th data-sort="winrate"    class="th-sort num {% if sort_key == 'winrate'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Winrate</th>
+                <th data-sort="pickrate"   class="th-sort num {% if sort_key == 'pickrate'   %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Pick rate</th>
+                <th data-sort="banrate"    class="th-sort num {% if sort_key == 'banrate'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Ban rate</th>
+                <th data-sort="games"      class="th-sort num {% if sort_key == 'games'      %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Games</th>
+                <th data-sort="blind_risk" class="th-sort num {% if sort_key == 'blind_risk' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Weighted exposure to popular bad matchups (lower = safer blind pick)">Blind risk</th>
             </tr>
         </thead>
         <tbody>
             {% for c in champions %}
             <tr>
+                <td class="role-cell">
+                    <img class="role-icon" src="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-static-assets/global/default/svg/position-{{ role_icon_slug(c.lane) }}.svg" alt="{{ c.lane }}" title="{{ c.lane }}">
+                </td>
                 <td class="champ">
-                    <a href="{{ url_for('champion_matchups', champion_name=c.champion_name, lane=lane, tier=tier) }}">
+                    <a href="{{ url_for('champion_matchups', champion_name=c.champion_name, lane=c.lane, tier=tier) }}">
                         <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champ_id(c.champion_name) }}.png"
                              alt="" loading="lazy" onerror="this.style.visibility='hidden'">
                     </a>
-                    <a href="{{ url_for('champion_matchups', champion_name=c.champion_name, lane=lane, tier=tier) }}">{{ c.champion_name }}</a>
+                    <a href="{{ url_for('champion_matchups', champion_name=c.champion_name, lane=c.lane, tier=tier) }}">{{ c.champion_name }}</a>
                 </td>
-                <td class="num">{{ c.tier_badge or '—' }}</td>
                 <td class="num winrate {% if c.winrate and c.winrate >= 52 %}good{% elif c.winrate and c.winrate <= 48 %}bad{% endif %}">
                     {{ "%.2f"|format(c.winrate) ~ "%" if c.winrate is not none else '—' }}
                 </td>
@@ -74,7 +73,91 @@
         </tbody>
     </table>
     {% else %}
-    <p class="empty">No champions in this lane × tier yet.</p>
+    <p class="empty">No champions in this filter combination yet.</p>
     {% endif %}
+
+    <style>
+        .role-buttons {
+            display: flex;
+            gap: 0.4rem;
+            align-items: stretch;
+        }
+        .role-btn {
+            background: #232328;
+            color: #aaa;
+            border: 1px solid #34343a;
+            border-radius: 6px;
+            padding: 0.45rem 0.75rem;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.78rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            line-height: 1;
+            transition: border-color 0.12s, color 0.12s, background 0.12s;
+        }
+        .role-btn:hover { border-color: #5b8def; color: #e6e6e6; }
+        .role-btn.active {
+            border-color: #5b8def;
+            background: #2a3a55;
+            color: #e6e6e6;
+        }
+        .role-btn img {
+            width: 22px;
+            height: 22px;
+            /* CommunityDragon SVGs are dark by default; invert + tint for the dark UI. */
+            filter: invert(1) brightness(0.85);
+        }
+        .role-btn.active img { filter: invert(1) brightness(1.0); }
+        /* The "All" button has no icon, so pad it to match the iconned ones. */
+        .role-btn-all { padding-top: 0.62rem; padding-bottom: 0.62rem; }
+
+        .th-sort { cursor: pointer; user-select: none; }
+        .th-sort:hover { color: #e6e6e6; }
+        .th-sort.sorted-asc::after  { content: ' ▲'; color: #5b8def; font-size: 0.7em; }
+        .th-sort.sorted-desc::after { content: ' ▼'; color: #5b8def; font-size: 0.7em; }
+
+        .role-cell { width: 28px; padding-right: 0.4rem; }
+        .role-icon {
+            width: 22px;
+            height: 22px;
+            display: block;
+            filter: invert(1) brightness(0.85);
+        }
+    </style>
+
+    <script>
+        // Role button → set hidden lane field + submit.
+        document.querySelectorAll('.role-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.getElementById('lane-input').value = btn.dataset.lane;
+                document.getElementById('filters').submit();
+            });
+        });
+
+        // Tier change → submit immediately.
+        document.getElementById('tier-select').addEventListener('change', () => {
+            document.getElementById('filters').submit();
+        });
+
+        // Click a column header → sort by it. Same column twice flips direction.
+        const NATURAL_DESC = new Set(['winrate', 'pickrate', 'banrate', 'games']);
+        const currentSort = "{{ sort_by }}";
+        document.querySelectorAll('th[data-sort]').forEach(th => {
+            th.addEventListener('click', () => {
+                const col = th.dataset.sort;
+                let next;
+                if (currentSort === col)            next = '-' + col;
+                else if (currentSort === '-' + col) next = col;
+                else                                next = NATURAL_DESC.has(col) ? '-' + col : col;
+                document.getElementById('sort-input').value = next;
+                document.getElementById('filters').submit();
+            });
+        });
+    </script>
     {% endif %}
 {% endblock %}
