@@ -1,0 +1,96 @@
+name: Build & Release App
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g. 0.1.0). Used only for non-tag manual builds.'
+        required: false
+        default: '0.0.0-dev'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Determine version
+        id: ver
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_NAME -match '^v(\d+\.\d+\.\d+)$') {
+            $version = $matches[1]
+          } else {
+            $version = '${{ inputs.version }}'
+          }
+          Write-Host "Building version $version"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Sync version.py to build version
+        shell: pwsh
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'
+          "__version__ = `"$v`"`n" | Set-Content version.py -Encoding utf8
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[build]
+
+      - name: Bundle latest crawled DB (best-effort)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release view db-latest 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Fetching db-latest snapshot for the installer."
+            gh release download db-latest --pattern lolalytics.db --clobber
+          } else {
+            Write-Host "No db-latest release yet; using committed DB."
+          }
+
+      - name: Build .exe with PyInstaller
+        run: pyinstaller lol_matchups.spec
+
+      - name: Compile installer with Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          & $iscc /DAppVersion=${{ steps.ver.outputs.version }} installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with code $LASTEXITCODE" }
+
+      - name: Upload build artifacts (always)
+        uses: actions/upload-artifact@v4
+        with:
+          name: lol-draft-helper-${{ steps.ver.outputs.version }}
+          path: |
+            dist/lol-draft-helper.exe
+            installer/lol-draft-helper-setup-${{ steps.ver.outputs.version }}.exe
+
+      - name: Create / update GitHub Release (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          make_latest: 'true'
+          files: |
+            dist/lol-draft-helper.exe
+            installer/lol-draft-helper-setup-${{ steps.ver.outputs.version }}.exe

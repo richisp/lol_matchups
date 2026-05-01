@@ -372,22 +372,6 @@ def compute_draft_scores(
             "synergy_breakdown": synergy_breakdown,
         })
 
-    # Color blind_risk by percentile within this lane × tier — fixed thresholds
-    # don't work because risk magnitudes vary a lot across lanes (TOP min=10
-    # while SUPPORT min=1, etc.). Bottom quartile = good, top quartile = bad.
-    if out:
-        sorted_risks = sorted(r["blind_risk"] for r in out)
-        n = len(sorted_risks)
-        p25 = sorted_risks[max(0, n // 4 - 1)]
-        p75 = sorted_risks[min(n - 1, 3 * n // 4)]
-        for r in out:
-            if r["blind_risk"] <= p25:
-                r["risk_class"] = "good"
-            elif r["blind_risk"] >= p75:
-                r["risk_class"] = "bad"
-            else:
-                r["risk_class"] = ""
-
     out.sort(key=lambda r: r["fit"], reverse=True)
     return out
 

@@ -23,6 +23,10 @@ a = Analysis(
         # pywebview's runtime backend + Flask's auto-detected modules
         *collect_submodules("webview"),
         "_cffi_backend",
+        # New modules wired into launcher.py
+        "sync",
+        "updater",
+        "version",
     ],
     hookspath=[],
     hooksconfig={},

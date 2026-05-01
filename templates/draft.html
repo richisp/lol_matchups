@@ -113,7 +113,7 @@
                                     {{ breakdown_section(c.synergy_breakdown, 'ally', c.synergy_total, 'w/ Allies') }}
                                     <div class="bk-risk" title="Weighted exposure to popular bad matchups in this lane (lower = safer blind pick)">
                                         Blind risk
-                                        <span class="{{ c.risk_class }}">{{ "%.2f"|format(c.blind_risk) }}</span>
+                                        <span class="{% if c.blind_risk < 5 %}good{% elif c.blind_risk > 10 %}bad{% endif %}">{{ "%.2f"|format(c.blind_risk) }}</span>
                                     </div>
                                 </div>
                             </td>
@@ -123,13 +123,13 @@
                             <td class="num winrate {% if c.base >= 52 %}good{% elif c.base <= 48 %}bad{% endif %}">
                                 {{ "%.2f"|format(c.base) }}
                             </td>
-                            <td class="num {% if c.counter_total > 0 %}good{% elif c.counter_total < 0 %}bad{% endif %}">
+                            <td class="num {% if c.counter_total > 1 %}good{% elif c.counter_total < -1 %}bad{% endif %}">
                                 {% if c.counter_total >= 0 %}+{% endif %}{{ "%.2f"|format(c.counter_total) }}
                             </td>
-                            <td class="num {% if c.synergy_total > 0 %}good{% elif c.synergy_total < 0 %}bad{% endif %}">
+                            <td class="num {% if c.synergy_total > 1 %}good{% elif c.synergy_total < -1 %}bad{% endif %}">
                                 {% if c.synergy_total >= 0 %}+{% endif %}{{ "%.2f"|format(c.synergy_total) }}
                             </td>
-                            <td class="num {{ c.risk_class }}">
+                            <td class="num {% if c.blind_risk < 5 %}good{% elif c.blind_risk > 10 %}bad{% endif %}">
                                 {{ "%.2f"|format(c.blind_risk) }}
                             </td>
                         </tr>
@@ -441,6 +441,13 @@
         .bk-faded { color: #555; font-style: italic; }
         .bk-contrib { font-weight: 600; text-align: right; font-size: 0.86rem; }
         .bk-empty { color: #666; font-size: 0.78rem; padding: 0.15rem 0; }
+
+        /* base.html only colors `.winrate.good` / `.winrate.bad`. Color the
+           remaining .good/.bad cells (vs, w/, Risk) and tooltip contribs. */
+        .recs-table td.good { color: #5cd65c; font-weight: 600; }
+        .recs-table td.bad  { color: #e85a5a; font-weight: 600; }
+        .rec-tooltip .good { color: #5cd65c; }
+        .rec-tooltip .bad  { color: #e85a5a; }
         .bk-risk {
             display: flex; justify-content: space-between; align-items: baseline;
             margin-top: 0.55rem; padding-top: 0.4rem;
@@ -478,6 +485,19 @@
             const oldScroll = document.querySelector('.recs-scroll');
             const savedScrollTop = oldScroll ? oldScroll.scrollTop : 0;
 
+            // Preserve focus + cursor position. Otherwise an LCU-driven swap
+            // happening while the user is clicking/typing in an input will
+            // blow away their focus, making clicks feel unresponsive.
+            const focused = document.activeElement;
+            let focusInfo = null;
+            if (focused && form.contains(focused) && focused.name) {
+                focusInfo = { name: focused.name };
+                if (typeof focused.selectionStart === 'number') {
+                    focusInfo.selStart = focused.selectionStart;
+                    focusInfo.selEnd = focused.selectionEnd;
+                }
+            }
+
             try {
                 const r = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
                 if (!r.ok) return;
@@ -488,6 +508,16 @@
                     form.replaceWith(newForm);
                     const newScroll = document.querySelector('.recs-scroll');
                     if (newScroll) newScroll.scrollTop = savedScrollTop;
+                    if (focusInfo) {
+                        const target = newForm.querySelector(`[name="${focusInfo.name}"]`);
+                        if (target) {
+                            target.focus();
+                            if (focusInfo.selStart != null && target.setSelectionRange) {
+                                try { target.setSelectionRange(focusInfo.selStart, focusInfo.selEnd); }
+                                catch (_) { /* not all input types support selection */ }
+                            }
+                        }
+                    }
                 }
             } catch (e) {
                 if (e.name !== 'AbortError') console.error('refresh error', e);

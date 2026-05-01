@@ -18,6 +18,12 @@ DB_PATH = APP_DIR / "lolalytics.db"
 
 DEFAULT_TIER = os.environ.get("LOLALYTICS_TIER", "emerald_plus")
 
+# GitHub repo (owner/name) used for DB syncing and app auto-update. The
+# crawler workflow pushes daily DB snapshots to the `db-latest` release on
+# this repo; the app pulls from there. Public access is required on either
+# the repo or its release assets — see WINDOWS.md for setup notes.
+GITHUB_REPO: str = os.environ.get("LOL_MATCHUPS_REPO", "richisp/lol_matchups")
+
 # Canonical position keys used everywhere the app refers to a role.
 POSITIONS: tuple[str, ...] = ("TOP", "JUNGLE", "MID", "BOT", "SUPPORT")
 
