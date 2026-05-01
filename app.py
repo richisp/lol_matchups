@@ -7,6 +7,7 @@ from flask import Flask, jsonify, render_template, request
 import config
 import db
 import lcu
+from version import __version__ as APP_VERSION
 
 # When frozen by PyInstaller, templates extract to sys._MEIPASS/templates.
 if getattr(sys, "frozen", False):
@@ -105,6 +106,7 @@ def role_icon_slug(role: str) -> str:
 
 
 app.jinja_env.globals["role_icon_slug"] = role_icon_slug
+app.jinja_env.globals["app_version"] = APP_VERSION
 
 
 def get_available_tiers() -> list[str]:
