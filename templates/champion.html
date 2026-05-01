@@ -22,13 +22,13 @@
     {% if error %}
         <p class="empty">{{ error }}</p>
     {% else %}
-    <form method="get" class="filter-form">
+    <form method="get" class="filter-form" id="champ-filters">
         <input type="hidden" name="lane" value="{{ lane }}">
         <input type="hidden" name="tier" value="{{ tier }}">
         <label>Type
             <select name="type">
-                <option value="counter" {% if matchup_type == 'counter' %}selected{% endif %}>Strong against</option>
-                <option value="synergy" {% if matchup_type == 'synergy' %}selected{% endif %}>Good synergy</option>
+                <option value="counter" {% if matchup_type == 'counter' %}selected{% endif %}>Counter</option>
+                <option value="synergy" {% if matchup_type == 'synergy' %}selected{% endif %}>Synergy</option>
             </select>
         </label>
         <label>Min games
@@ -40,8 +40,14 @@
                 <option value="games"   {% if sort_by == 'games'   %}selected{% endif %}>Match count</option>
             </select>
         </label>
-        <button type="submit">Apply</button>
     </form>
+    <script>
+        // Auto-submit on any filter change.
+        const champFilters = document.getElementById('champ-filters');
+        champFilters.querySelectorAll('select, input[type="number"]').forEach(el => {
+            el.addEventListener('change', () => champFilters.submit());
+        });
+    </script>
 
     {% set total_count = matchups.values()|map('length')|sum %}
     {% if total_count == 0 %}

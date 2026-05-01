@@ -18,14 +18,33 @@ app = Flask(__name__, template_folder=_template_folder)
 
 POSITIONS = list(config.POSITIONS)
 
-CHAMPION_SORT_KEYS = {
+LANE_ALL = "ALL"
+LANE_SORT_ORDER = {"TOP": 0, "JUNGLE": 1, "MID": 2, "BOT": 3, "SUPPORT": 4}
+
+# Maps URL sort key → (db column, default-descending). The URL accepts a
+# leading "-" to flip direction (e.g. "-name" sorts name descending).
+CHAMPION_SORT_KEYS: dict[str, tuple[str, bool]] = {
     "winrate":     ("winrate", True),
     "pickrate":    ("pickrate", True),
     "banrate":     ("banrate", True),
     "games":       ("games", True),
-    "blind_risk":  ("blind_risk", False),  # ascending — lower risk is better
+    "blind_risk":  ("blind_risk", False),
     "name":        ("champion_name", False),
+    "role":        ("lane", False),
 }
+DEFAULT_SORT = "winrate"  # canonical default; rendered as "winrate" (descending via natural default)
+
+# Same shape, but for the draft recs table. Column names map to candidate-dict
+# keys (compute_draft_scores's output, not raw DB columns).
+DRAFT_SORT_KEYS: dict[str, tuple[str, bool]] = {
+    "name":    ("champion_name", False),
+    "fit":     ("fit", True),
+    "base":    ("base", True),
+    "counter": ("counter_total", True),
+    "synergy": ("synergy_total", True),
+    "risk":    ("blind_risk", False),
+}
+DRAFT_DEFAULT_SORT = "fit"
 
 MATCHUP_SORT_KEYS = {
     "winrate": ("winrate", True),
@@ -71,6 +90,21 @@ def champ_id(name: str) -> str:
 
 
 app.jinja_env.globals["champ_id"] = champ_id
+
+
+# Map our canonical lane keys to CommunityDragon's URL slugs for the
+# position-icon SVGs. "ALL" → "fill" (the autofill icon).
+_ROLE_SLUG = {
+    "TOP": "top", "JUNGLE": "jungle", "MID": "middle",
+    "BOT": "bottom", "SUPPORT": "utility", "ALL": "fill",
+}
+
+
+def role_icon_slug(role: str) -> str:
+    return _ROLE_SLUG.get((role or "").upper(), "fill")
+
+
+app.jinja_env.globals["role_icon_slug"] = role_icon_slug
 
 
 def get_available_tiers() -> list[str]:
@@ -135,27 +169,71 @@ def compute_blind_risk(
     return scores
 
 
-def get_champion_list(lane: str, tier: str, sort_by: str):
+def parse_sort(
+    sort_param: str,
+    sort_keys: dict[str, tuple[str, bool]] = CHAMPION_SORT_KEYS,
+    default: str = DEFAULT_SORT,
+) -> tuple[str, str, bool]:
+    """Parse a `sort` URL param like 'winrate' or '-name' into
+    (canonical_key, db_column, descending). A leading `-` forces descending,
+    `+` forces ascending; absence falls back to the natural default for the
+    column."""
+    explicit_desc = sort_param.startswith("-")
+    explicit_asc = sort_param.startswith("+")
+    base = sort_param.lstrip("+-")
+    if base not in sort_keys:
+        base = default
+    db_col, default_desc = sort_keys[base]
+    if explicit_desc:
+        desc = True
+    elif explicit_asc:
+        desc = False
+    else:
+        desc = default_desc
+    return base, db_col, desc
+
+
+def get_champion_list(lane: str, tier: str, sort_param: str):
     with db.connect(config.DB_PATH) as conn:
-        rows = conn.execute(
-            """
-            SELECT champion_name, lane, tier, winrate, pickrate, banrate, games, tier_badge
-              FROM champion_stats
-             WHERE lane = ? AND tier = ?
-            """,
-            (lane, tier),
-        ).fetchall()
-        risk = compute_blind_risk(conn, lane, tier)
+        if lane == LANE_ALL:
+            rows = conn.execute(
+                """
+                SELECT champion_name, lane, tier, winrate, pickrate, banrate, games, tier_badge
+                  FROM champion_stats
+                 WHERE tier = ?
+                """,
+                (tier,),
+            ).fetchall()
+            risk_by_lane = {l: compute_blind_risk(conn, l, tier) for l in POSITIONS}
+        else:
+            rows = conn.execute(
+                """
+                SELECT champion_name, lane, tier, winrate, pickrate, banrate, games, tier_badge
+                  FROM champion_stats
+                 WHERE lane = ? AND tier = ?
+                """,
+                (lane, tier),
+            ).fetchall()
+            risk_by_lane = {lane: compute_blind_risk(conn, lane, tier)}
 
     out = [dict(r) for r in rows]
     for d in out:
-        d["blind_risk"] = risk.get(d["champion_name"], 0.0)
+        d["blind_risk"] = risk_by_lane.get(d["lane"], {}).get(d["champion_name"], 0.0)
 
-    key, reverse = CHAMPION_SORT_KEYS[sort_by]
-    if key == "champion_name":
-        out.sort(key=lambda r: (r[key] or "").lower(), reverse=reverse)
+    _, db_col, desc = parse_sort(sort_param)
+    if db_col == "champion_name":
+        out.sort(key=lambda r: (r[db_col] or "").lower(), reverse=desc)
+    elif db_col == "lane":
+        # Sort by canonical lane order, with winrate desc as a stable secondary.
+        out.sort(key=lambda r: (
+            -(r["winrate"] or 0),
+        ), reverse=False)
+        out.sort(
+            key=lambda r: LANE_SORT_ORDER.get(r["lane"], 99),
+            reverse=desc,
+        )
     else:
-        out.sort(key=lambda r: (r[key] is None, r[key] or 0), reverse=reverse)
+        out.sort(key=lambda r: (r[db_col] is None, r[db_col] or 0), reverse=desc)
     return out
 
 
@@ -194,27 +272,35 @@ def index():
                                error="No data yet — run crawl_champions.py first.",
                                positions=POSITIONS)
 
-    lane = (request.args.get("lane") or "BOT").upper()
-    if lane not in POSITIONS:
-        lane = "BOT"
+    lane = (request.args.get("lane") or LANE_ALL).upper()
+    if lane != LANE_ALL and lane not in POSITIONS:
+        lane = LANE_ALL
 
     tier = request.args.get("tier") or available_tiers[0]
     if tier not in available_tiers:
         tier = available_tiers[0]
 
-    sort_by = request.args.get("sort", "winrate")
-    if sort_by not in CHAMPION_SORT_KEYS:
-        sort_by = "winrate"
+    raw_sort = request.args.get("sort") or DEFAULT_SORT
+    sort_key, _, sort_desc = parse_sort(raw_sort)
+    # Normalize the URL form so the JS click handler can detect direction
+    # (the sign matches the actual direction we render).
+    sort_by = ("-" if sort_desc else "") + sort_key
 
     champions = get_champion_list(lane, tier, sort_by)
+
+    lane_label = "All roles" if lane == LANE_ALL else lane
 
     return render_template(
         "index.html",
         positions=POSITIONS,
         lane=lane,
+        lane_label=lane_label,
+        lane_all=LANE_ALL,
         tier=tier,
         available_tiers=available_tiers,
         sort_by=sort_by,
+        sort_key=sort_key,
+        sort_desc=sort_desc,
         champions=champions,
         dd_version=get_dd_version(),
     )
@@ -426,6 +512,19 @@ def draft():
             )
         })
 
+    raw_sort = request.args.get("sort") or DRAFT_DEFAULT_SORT
+    sort_key, sort_col, sort_desc = parse_sort(
+        raw_sort, DRAFT_SORT_KEYS, DRAFT_DEFAULT_SORT,
+    )
+    if sort_col == "champion_name":
+        candidates.sort(key=lambda c: (c[sort_col] or "").lower(), reverse=sort_desc)
+    else:
+        candidates.sort(
+            key=lambda c: (c[sort_col] is None, c[sort_col] or 0),
+            reverse=sort_desc,
+        )
+    sort_by = ("-" if sort_desc else "") + sort_key
+
     return render_template(
         "draft.html",
         positions=POSITIONS,
@@ -439,6 +538,9 @@ def draft():
         candidates=candidates,
         champ_names=champ_names,
         dd_version=get_dd_version(),
+        sort_by=sort_by,
+        sort_key=sort_key,
+        sort_desc=sort_desc,
     )
 
 

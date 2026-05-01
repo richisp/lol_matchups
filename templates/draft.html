@@ -29,6 +29,7 @@
 
     <form id="draft-form" method="get" action="{{ url_for('draft') }}">
         <input type="hidden" name="active" value="{{ active }}" id="active-input">
+        <input type="hidden" name="sort" value="{{ sort_by }}" id="rec-sort-input">
         <div class="draft-board">
             <div class="team team-mine">
                 <h2>Your team</h2>
@@ -88,12 +89,12 @@
                 <table class="recs-table">
                     <thead>
                         <tr>
-                            <th>Champion</th>
-                            <th class="num">Fit</th>
-                            <th class="num" title="Champion's overall winrate in this lane × tier">Base</th>
-                            <th class="num" title="Sum of weighted counter-matchup deltas vs picked enemies">vs</th>
-                            <th class="num" title="Sum of weighted synergy deltas with picked teammates">w/</th>
-                            <th class="num" title="Weighted exposure to popular bad matchups in this lane × tier (lower = safer blind pick)">Risk</th>
+                            <th data-sort="name"    class="th-sort {% if sort_key == 'name'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Champion</th>
+                            <th data-sort="fit"     class="th-sort num {% if sort_key == 'fit'     %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Fit</th>
+                            <th data-sort="base"    class="th-sort num {% if sort_key == 'base'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Champion's overall winrate in this lane × tier">Base</th>
+                            <th data-sort="counter" class="th-sort num {% if sort_key == 'counter' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Sum of weighted counter-matchup deltas vs picked enemies">vs</th>
+                            <th data-sort="synergy" class="th-sort num {% if sort_key == 'synergy' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Sum of weighted synergy deltas with picked teammates">w/</th>
+                            <th data-sort="risk"    class="th-sort num {% if sort_key == 'risk'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Weighted exposure to popular bad matchups in this lane × tier (lower = safer blind pick)">Risk</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -348,6 +349,10 @@
             overflow: hidden;
         }
         .recs-table th { padding: 0.55rem 0.75rem; }
+        .recs-table th.th-sort { cursor: pointer; user-select: none; }
+        .recs-table th.th-sort:hover { color: #e6e6e6; }
+        .recs-table th.sorted-asc::after  { content: ' ▲'; color: #5b8def; font-size: 0.7em; }
+        .recs-table th.sorted-desc::after { content: ' ▼'; color: #5b8def; font-size: 0.7em; }
         .recs-table td { padding: 0.4rem 0.75rem; }
         .recs-table tr:hover td { background: #1f1f23; }
         .recs-table .champ { display: flex; align-items: center; gap: 0.6rem; }
@@ -527,6 +532,8 @@
         }
 
         // Event delegation: handlers stay live after refreshDraft swaps the form.
+        const RECS_NATURAL_DESC = new Set(['fit', 'base', 'counter', 'synergy']);
+
         document.addEventListener('click', (e) => {
             const slotPick = e.target.closest('.slot-pick');
             if (slotPick) {
@@ -544,6 +551,20 @@
                     slot.value = recPick.dataset.name;
                     refreshDraft();
                 }
+                return;
+            }
+            const sortHeader = e.target.closest('.recs-table th[data-sort]');
+            if (sortHeader) {
+                e.preventDefault();
+                const col = sortHeader.dataset.sort;
+                const inp = document.getElementById('rec-sort-input');
+                const current = inp ? inp.value : '';
+                let next;
+                if (current === col)            next = '-' + col;
+                else if (current === '-' + col) next = col;
+                else                            next = RECS_NATURAL_DESC.has(col) ? '-' + col : col;
+                if (inp) inp.value = next;
+                refreshDraft();
             }
         });
         document.addEventListener('change', (e) => {
