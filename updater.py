@@ -56,11 +56,20 @@ def _list_app_releases(repo: str, timeout: float) -> list[dict]:
     return [rel for rel in r.json() if VERSION_RE.match(rel.get("tag_name", ""))]
 
 
+PORTABLE_EXE_NAME = "lol-draft-helper.exe"
+
+
 def _find_exe_asset(release: dict) -> dict | None:
-    """Locate the .exe asset on the release. We expect one named like
-    `lol-draft-helper.exe` (matches the PyInstaller spec name)."""
+    """Locate the portable .exe asset on the release.
+
+    Each release has two .exe assets: the portable PyInstaller binary
+    (`lol-draft-helper.exe`) and the Inno Setup installer
+    (`lol-draft-helper-setup-X.Y.Z.exe`). The auto-updater wants the former
+    — swapping in the installer would replace the running app with a setup
+    wizard and break things. Match by exact name, not extension.
+    """
     for a in release.get("assets", []):
-        if a.get("name", "").lower().endswith(".exe"):
+        if a.get("name", "").lower() == PORTABLE_EXE_NAME:
             return a
     return None
 
