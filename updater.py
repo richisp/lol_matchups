@@ -50,6 +50,7 @@ def _list_app_releases(repo: str, timeout: float) -> list[dict]:
         f"https://api.github.com/repos/{repo}/releases",
         timeout=timeout,
         params={"per_page": 30},
+        follow_redirects=True,
     )
     r.raise_for_status()
     return [rel for rel in r.json() if VERSION_RE.match(rel.get("tag_name", ""))]
@@ -65,7 +66,9 @@ def _find_exe_asset(release: dict) -> dict | None:
 
 
 def _download(url: str, dest: Path, timeout: float) -> None:
-    with httpx.stream("GET", url, timeout=timeout) as r:
+    # GitHub release-asset URLs 302-redirect to a signed CDN URL — follow_redirects
+    # must be on or we'd just receive the redirect response and try to write that.
+    with httpx.stream("GET", url, timeout=timeout, follow_redirects=True) as r:
         r.raise_for_status()
         with open(dest, "wb") as f:
             for chunk in r.iter_bytes(64 * 1024):

@@ -41,7 +41,7 @@ def _read_local_version() -> dict | None:
 def _fetch_remote(repo: str, tag: str, timeout: float) -> tuple[dict, str] | None:
     """Returns (manifest, db_download_url) or None on any failure."""
     try:
-        r = httpx.get(_release_url(repo, tag), timeout=timeout)
+        r = httpx.get(_release_url(repo, tag), timeout=timeout, follow_redirects=True)
         if r.status_code != 200:
             log.info("DB sync: release lookup returned HTTP %d", r.status_code)
             return None
@@ -55,7 +55,8 @@ def _fetch_remote(repo: str, tag: str, timeout: float) -> tuple[dict, str] | Non
         if not manifest_url or not db_url:
             log.info("DB sync: required assets missing from release.")
             return None
-        manifest = httpx.get(manifest_url, timeout=timeout).json()
+        # browser_download_url 302-redirects to a signed CDN URL — must follow.
+        manifest = httpx.get(manifest_url, timeout=timeout, follow_redirects=True).json()
         return manifest, db_url
     except (httpx.HTTPError, json.JSONDecodeError) as e:
         log.info("DB sync: %s", e)
@@ -91,7 +92,7 @@ def sync_db(repo: str | None = None, timeout: float = 5.0) -> bool:
              (local or {}).get("updated_at", "<none>"))
     tmp = config.DB_PATH.with_suffix(".db.tmp")
     try:
-        with httpx.stream("GET", db_url, timeout=60.0) as r:
+        with httpx.stream("GET", db_url, timeout=60.0, follow_redirects=True) as r:
             r.raise_for_status()
             with open(tmp, "wb") as f:
                 for chunk in r.iter_bytes(64 * 1024):
