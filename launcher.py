@@ -38,6 +38,19 @@ logging.getLogger("werkzeug").setLevel(logging.WARNING)
 logging.info("--- launcher start, version=%s, frozen=%s, exe=%s ---",
              __version__, getattr(sys, "frozen", False), sys.executable)
 
+# Tell Windows this is a distinct app (not just "some Python process"), so
+# the taskbar uses our .exe's embedded icon rather than a generic fallback
+# and pywebview-Edge windows group correctly. Must be called before any
+# windows are created.
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "richisp.lol-draft-helper"
+        )
+    except Exception as e:  # noqa: BLE001
+        logging.info("AppUserModelID could not be set: %s", e)
+
 PORT = 5050
 URL = f"http://127.0.0.1:{PORT}/draft"
 
