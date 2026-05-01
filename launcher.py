@@ -17,12 +17,26 @@ import sys
 import threading
 import time
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-# Quiet Flask's per-request logging in the launcher console.
-logging.getLogger("werkzeug").setLevel(logging.WARNING)
-
+import config
 import sync
 import updater
+from version import __version__
+
+# File log lives next to the .exe (or next to launcher.py in dev). Lets us
+# see what the auto-updater / db-sync did even when the windowed .exe has no
+# console attached.
+_LOG_PATH = config.APP_DIR / "lol-draft-helper.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    handlers=[
+        logging.FileHandler(_LOG_PATH, encoding="utf-8", mode="a"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
+logging.info("--- launcher start, version=%s, frozen=%s, exe=%s ---",
+             __version__, getattr(sys, "frozen", False), sys.executable)
 
 PORT = 5050
 URL = f"http://127.0.0.1:{PORT}/draft"
@@ -66,6 +80,7 @@ def main() -> None:
         width=1500,
         height=950,
         resizable=True,
+        maximized=True,
     )
     webview.start()
 
