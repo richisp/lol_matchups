@@ -8,9 +8,31 @@
 #   - lolalytics.db is NOT bundled — it sits next to the .exe so the user
 #     can update it without rebuilding (config.py handles this).
 
+import os
+
 from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
+
+# Generate icon.ico from the source .webp if needed. Inno Setup also reads
+# this file (see installer.iss → SetupIconFile=icon.ico).
+ICON_SRC = "heimerdinger-emote.webp"
+ICON_OUT = "icon.ico"
+_needs_build = (
+    os.path.exists(ICON_SRC)
+    and (not os.path.exists(ICON_OUT)
+         or os.path.getmtime(ICON_SRC) > os.path.getmtime(ICON_OUT))
+)
+if _needs_build:
+    try:
+        from PIL import Image
+        img = Image.open(ICON_SRC).convert("RGBA")
+        img.save(ICON_OUT, format="ICO",
+                 sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+        print(f"[spec] generated {ICON_OUT} from {ICON_SRC}")
+    except Exception as e:
+        print(f"[spec] WARN could not generate {ICON_OUT}: {e}")
+ICON_FILE = ICON_OUT if os.path.exists(ICON_OUT) else None
 
 a = Analysis(
     ["launcher.py"],
@@ -64,6 +86,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # Add icon=... when you have one:
-    # icon="icon.ico",
+    icon=ICON_FILE,
 )
