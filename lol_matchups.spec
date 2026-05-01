@@ -14,10 +14,15 @@ from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
 
+# Resolve paths against the spec's directory rather than CWD — PyInstaller's
+# eval CWD has been observed to differ from where the spec lives in some
+# environments, and `SPEC` is the canonical path it provides.
+SPEC_DIR = os.path.dirname(os.path.abspath(SPEC))
+
 # Generate icon.ico from the source .webp if needed. Inno Setup also reads
 # this file (see installer.iss → SetupIconFile=icon.ico).
-ICON_SRC = "heimerdinger-emote.webp"
-ICON_OUT = "icon.ico"
+ICON_SRC = os.path.join(SPEC_DIR, "heimerdinger-emote.webp")
+ICON_OUT = os.path.join(SPEC_DIR, "icon.ico")
 _needs_build = (
     os.path.exists(ICON_SRC)
     and (not os.path.exists(ICON_OUT)
@@ -33,6 +38,7 @@ if _needs_build:
     except Exception as e:
         print(f"[spec] WARN could not generate {ICON_OUT}: {e}")
 ICON_FILE = ICON_OUT if os.path.exists(ICON_OUT) else None
+print(f"[spec] ICON_FILE = {ICON_FILE!r}")
 
 a = Analysis(
     ["launcher.py"],
@@ -78,7 +84,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,            # no terminal window pops up
@@ -88,3 +94,5 @@ exe = EXE(
     entitlements_file=None,
     icon=ICON_FILE,
 )
+# Disable UPX-compression on the icon-bearing .exe — UPX has been observed to
+# strip or break the icon resource in PyInstaller-produced binaries.
