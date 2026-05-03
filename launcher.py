@@ -51,6 +51,23 @@ if sys.platform == "win32":
     except Exception as e:  # noqa: BLE001
         logging.info("AppUserModelID could not be set: %s", e)
 
+    # Nudge Explorer to re-read the .exe's embedded icon. Windows caches icons
+    # by (path, mtime, size) and is sticky across reinstalls of the same .exe
+    # at the same path — without this, a fresh install over a prior icon-less
+    # version keeps showing the old (Python) icon. SHCNE_UPDATEITEM is the
+    # targeted refresh; SHCNE_ASSOCCHANGED is the broad fallback.
+    if getattr(sys, "frozen", False):
+        try:
+            import ctypes
+            SHCNE_UPDATEITEM = 0x00002000
+            SHCNE_ASSOCCHANGED = 0x08000000
+            SHCNF_PATHW = 0x0005
+            exe = ctypes.c_wchar_p(sys.executable)
+            ctypes.windll.shell32.SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW, exe, None)
+            ctypes.windll.shell32.SHChangeNotify(SHCNE_ASSOCCHANGED, 0, None, None)
+        except Exception as e:  # noqa: BLE001
+            logging.info("SHChangeNotify failed: %s", e)
+
 PORT = 5050
 URL = f"http://127.0.0.1:{PORT}/draft"
 
