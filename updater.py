@@ -31,6 +31,28 @@ import httpx
 import config
 from version import __version__
 
+# Testing knobs. These let you verify the auto-update pipeline end-to-end
+# without re-tagging / re-publishing each time:
+#   LOL_MATCHUPS_VERSION_OVERRIDE=0.0.0   — make the running app *report* this
+#                                            version, so the updater treats
+#                                            the current GitHub latest as a
+#                                            real upgrade.
+#   LOL_MATCHUPS_FORCE_UPDATE=1           — bypass the "is remote newer?" check
+#                                            entirely. The updater will fetch
+#                                            and apply the current latest even
+#                                            when versions match.
+# Both are read fresh on each check_and_apply() call.
+_VERSION_OVERRIDE_ENV = "LOL_MATCHUPS_VERSION_OVERRIDE"
+_FORCE_UPDATE_ENV = "LOL_MATCHUPS_FORCE_UPDATE"
+
+
+def _local_version() -> str:
+    return os.environ.get(_VERSION_OVERRIDE_ENV) or __version__
+
+
+def _force_update() -> bool:
+    return os.environ.get(_FORCE_UPDATE_ENV, "").lower() in ("1", "true", "yes")
+
 log = logging.getLogger(__name__)
 
 VERSION_RE = re.compile(r"^v(\d+\.\d+\.\d+)$")
@@ -93,81 +115,90 @@ def _download(url: str, dest: Path, timeout: float) -> None:
 
 
 def _spawn_swap(current_exe: Path, new_exe: Path) -> None:
-    """Spawn a detached cmd that waits for us to exit, swaps in the new .exe,
-    and relaunches. We then exit ourselves.
+    """Spawn a detached PowerShell that waits for us to exit, swaps in the new
+    .exe, and relaunches. We then exit ourselves.
 
-    The swap can race with antivirus / Windows Search holding a transient file
-    lock on the just-exited .exe, so the script retries move several times and
-    logs to .update.log alongside the .exe — that file is invaluable when an
-    update silently fails.
+    PowerShell handles all the things batch was bad at: PID-by-name lookup
+    via Get-Process (no false positives from PID reuse, no `tasklist | find`
+    heuristics), structured try/catch on Move-Item retries, and cleaner
+    logging. Logs to .update.log alongside the .exe.
     """
     pid = os.getpid()
-    exe_name = current_exe.name  # e.g. lol-draft-helper.exe
-    bat = current_exe.parent / ".update.bat"
-    # Notes:
-    # - `if errorlevel N` means "errorlevel >= N", so `not errorlevel 1` means
-    #   errorlevel == 0 (find matched / command succeeded).
-    # - We filter tasklist by BOTH PID and image name. Windows recycles PIDs
-    #   aggressively, so the same PID can quickly land on an unrelated process
-    #   and our wait would loop forever. Adding the image-name filter pins the
-    #   check to "our app, not just our old PID".
-    # - WAIT_LIMIT caps the wait so a stuck script can't run indefinitely.
-    bat.write_text(
-        f"""@echo off
-setlocal
-set "NEW_EXE={new_exe}"
-set "CUR_EXE={current_exe}"
-set "EXE_NAME={exe_name}"
-set "LOG=%~dp0.update.log"
-set MAX_RETRIES=30
-set WAIT_LIMIT=60
+    exe_stem = current_exe.stem  # "lol-draft-helper" (no extension)
+    ps1 = current_exe.parent / ".update.ps1"
+    ps1.write_text(
+        f"""$ErrorActionPreference = 'Continue'
+$pidToWait = {pid}
+$exeName   = '{exe_stem}'
+$cur       = '{current_exe}'
+$new       = '{new_exe}'
+$log       = (Split-Path -Parent $cur) + '\\.update.log'
 
-(echo [%date% %time%] update.bat start, waiting for PID {pid} / %EXE_NAME%) >> "%LOG%"
+function Log($msg) {{
+    $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $msg"
+    Add-Content -Path $log -Value $line -Encoding utf8
+}}
 
-set WAITED=0
-:wait
-tasklist /FI "PID eq {pid}" /FI "IMAGENAME eq %EXE_NAME%" 2>nul | find "{pid}" >nul
-if errorlevel 1 goto wait_done
-set /a WAITED+=1
-if %WAITED% GEQ %WAIT_LIMIT% (
-    (echo [%date% %time%] PID still alive after %WAIT_LIMIT%s, proceeding anyway) >> "%LOG%"
-    goto wait_done
-)
-timeout /t 1 /nobreak >nul
-goto wait
+Log "update start, waiting for PID $pidToWait / $exeName"
 
-:wait_done
-(echo [%date% %time%] proceeding to swap) >> "%LOG%"
+# Wait for the launcher to exit. Get-Process resolves by PID *and* we verify
+# the process name — if Windows recycles the PID for an unrelated process,
+# the name check rules it out instead of looping forever.
+$waited = 0
+while ($waited -lt 60) {{
+    $p = Get-Process -Id $pidToWait -ErrorAction SilentlyContinue
+    if (-not $p -or $p.ProcessName -ne $exeName) {{ break }}
+    Start-Sleep -Seconds 1
+    $waited++
+}}
+Log "proceeding to swap after $waited s wait"
 
-set RETRIES=0
-:try_move
-move /Y "%NEW_EXE%" "%CUR_EXE%" >> "%LOG%" 2>&1
-if not errorlevel 1 goto move_done
-set /a RETRIES+=1
-if %RETRIES% GEQ %MAX_RETRIES% (
-    (echo [%date% %time%] giving up after %MAX_RETRIES% retries) >> "%LOG%"
-    exit /b 1
-)
-(echo [%date% %time%] move failed, retry %RETRIES%) >> "%LOG%"
-timeout /t 1 /nobreak >nul
-goto try_move
+# Retry the move — antivirus / Windows Search can hold transient file locks
+# on the just-exited .exe.
+$retries = 0
+$swapped = $false
+while ($retries -lt 30) {{
+    try {{
+        Move-Item -Force -LiteralPath $new -Destination $cur -ErrorAction Stop
+        $swapped = $true
+        break
+    }} catch {{
+        Log "move attempt $retries failed: $($_.Exception.Message)"
+        Start-Sleep -Seconds 1
+        $retries++
+    }}
+}}
 
-:move_done
-(echo [%date% %time%] swap done, refreshing icon cache + relaunching) >> "%LOG%"
-:: Tell Explorer the .exe's resources may have changed so it reloads the icon
-:: instead of serving the cached one. SHCNE_ASSOCCHANGED is broader than
-:: ie4uinit -show but doesn't kill any Explorer windows.
-powershell -NoProfile -NonInteractive -Command "Add-Type -Namespace W -Name S -MemberDefinition '[System.Runtime.InteropServices.DllImport(\"shell32.dll\")] public static extern void SHChangeNotify(int eventId, uint flags, System.IntPtr item1, System.IntPtr item2);'; [W.S]::SHChangeNotify(0x08000000, 0, [System.IntPtr]::Zero, [System.IntPtr]::Zero)" >nul 2>&1
-start "" "%CUR_EXE%"
-del "%~f0"
+if (-not $swapped) {{
+    Log "giving up after $retries retries; leaving $new in place"
+    Remove-Item -Force -LiteralPath $MyInvocation.MyCommand.Path -ErrorAction SilentlyContinue
+    exit 1
+}}
+
+Log "swap done, refreshing icon cache + relaunching"
+
+# Refresh Explorer icon cache so the new icon takes effect immediately.
+try {{
+    Add-Type -Namespace W -Name S -MemberDefinition '[System.Runtime.InteropServices.DllImport("shell32.dll")] public static extern void SHChangeNotify(int eventId, uint flags, System.IntPtr item1, System.IntPtr item2);'
+    [W.S]::SHChangeNotify(0x08000000, 0, [System.IntPtr]::Zero, [System.IntPtr]::Zero)
+}} catch {{}}
+
+Start-Process -FilePath $cur
+Remove-Item -Force -LiteralPath $MyInvocation.MyCommand.Path -ErrorAction SilentlyContinue
 """,
         encoding="utf-8",
     )
-    # CREATE_NEW_PROCESS_GROUP + DETACHED_PROCESS = 0x00000200 | 0x00000008
     DETACHED = 0x00000008
     NEW_PROCESS_GROUP = 0x00000200
     subprocess.Popen(
-        ["cmd", "/c", str(bat)],
+        [
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy", "Bypass",
+            "-WindowStyle", "Hidden",
+            "-File", str(ps1),
+        ],
         creationflags=DETACHED | NEW_PROCESS_GROUP,
         close_fds=True,
     )
@@ -184,6 +215,13 @@ def check_and_apply(repo: str | None = None, timeout: float = 5.0) -> bool:
         return False
 
     repo = repo or config.GITHUB_REPO
+    local_v = _local_version()
+    forced = _force_update()
+    if local_v != __version__:
+        log.info("updater: VERSION_OVERRIDE=%s (real=%s).", local_v, __version__)
+    if forced:
+        log.info("updater: FORCE_UPDATE=1 — bypassing newer-than check.")
+
     try:
         latest = _latest_app_release(repo, timeout)
     except (httpx.HTTPError, ValueError) as e:
@@ -199,8 +237,8 @@ def check_and_apply(repo: str | None = None, timeout: float = 5.0) -> bool:
         log.info("updater: latest tag %r isn't vX.Y.Z — skipping.", tag)
         return False
     remote_v = m.group(1)
-    if _parse(remote_v) <= _parse(__version__):
-        log.info("updater: already on latest (%s).", __version__)
+    if not forced and _parse(remote_v) <= _parse(local_v):
+        log.info("updater: already on latest (%s).", local_v)
         return False
 
     asset = _find_exe_asset(latest)
