@@ -234,15 +234,23 @@ Remove-Item -Force -LiteralPath $selfPath -ErrorAction SilentlyContinue
     out_fh = open(current_exe.parent / ".update-stdout.log", "ab")
     err_fh = open(current_exe.parent / ".update-stderr.log", "ab")
 
-    # CRITICAL: strip PyInstaller's internal env vars before spawning the swap
-    # script. They point at *our* _MEI<pid> extraction dir, and would be
-    # inherited through PowerShell into the relaunched .exe. The new .exe's
-    # bootloader would then think it's already extracted (using our path)
-    # instead of unpacking its own files — and by the time it tries to
-    # LoadLibrary python312.dll, our dir has been torn down on parent exit.
+    # CRITICAL: strip env vars that shouldn't be inherited by the relaunched
+    # .exe.
+    #   _PYI* / PYINSTALLER_* — PyInstaller bootloader internals; if these
+    #     leak through, the new .exe thinks it's already extracted (at our
+    #     dying _MEI dir) and "Failed to load Python DLL" fires.
+    #   LOL_MATCHUPS_FORCE_UPDATE / _VERSION_OVERRIDE — testing knobs. If left
+    #     set, every relaunch re-runs the updater → infinite update loop.
+    #     One-shot semantics: a force-update should fire once and then the
+    #     relaunched app starts normally.
     child_env = {
         k: v for k, v in os.environ.items()
-        if not (k.startswith("_PYI") or k.startswith("PYINSTALLER_"))
+        if not (
+            k.startswith("_PYI")
+            or k.startswith("PYINSTALLER_")
+            or k == _FORCE_UPDATE_ENV
+            or k == _VERSION_OVERRIDE_ENV
+        )
     }
 
     # CREATE_NO_WINDOW (not DETACHED_PROCESS) for a hidden console child:
