@@ -17,6 +17,17 @@ else:
 
 app = Flask(__name__, template_folder=_template_folder)
 
+
+@app.after_request
+def _no_cache(response):
+    """Don't let the embedded WebView2 cache HTML/JS responses across app
+    relaunches. Without this, an auto-update can swap the .exe but the
+    relaunched webview still shows the previous version's page from cache."""
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
 POSITIONS = list(config.POSITIONS)
 
 LANE_ALL = "ALL"
