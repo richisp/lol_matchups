@@ -105,7 +105,12 @@ def _find_exe_asset(release: dict) -> dict | None:
     return None
 
 
-def _download(url: str, dest: Path, timeout: float) -> None:
+def _download(url: str, dest: Path, timeout: float, expected_size: int | None = None) -> None:
+    """Stream a download to dest, verifying the final size matches the asset's
+    declared size. Truncated downloads (network blip, server hangup) would
+    otherwise produce a corrupt PyInstaller .exe whose bootloader fails to
+    unpack and dies with cryptic missing-DLL errors.
+    """
     # GitHub release-asset URLs 302-redirect to a signed CDN URL — follow_redirects
     # must be on or we'd just receive the redirect response and try to write that.
     with httpx.stream("GET", url, timeout=timeout, follow_redirects=True) as r:
@@ -113,6 +118,16 @@ def _download(url: str, dest: Path, timeout: float) -> None:
         with open(dest, "wb") as f:
             for chunk in r.iter_bytes(64 * 1024):
                 f.write(chunk)
+    if expected_size is not None:
+        actual = dest.stat().st_size
+        if actual != expected_size:
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+            raise OSError(
+                f"download size mismatch: got {actual} bytes, expected {expected_size}"
+            )
 
 
 def _spawn_swap(current_exe: Path, new_exe: Path) -> None:
@@ -272,9 +287,14 @@ def check_and_apply(repo: str | None = None, timeout: float = 5.0) -> bool:
 
     current_exe = Path(sys.executable)
     new_exe = current_exe.with_name(current_exe.stem + f".{remote_v}.new.exe")
-    log.info("updater: downloading %s → %s", asset["name"], new_exe)
+    expected_size = asset.get("size")
+    log.info("updater: downloading %s (%s bytes) → %s",
+             asset["name"], expected_size, new_exe)
     try:
-        _download(asset["browser_download_url"], new_exe, timeout=120.0)
+        _download(
+            asset["browser_download_url"], new_exe,
+            timeout=120.0, expected_size=expected_size,
+        )
     except (httpx.HTTPError, OSError) as e:
         log.warning("updater: download failed — %s", e)
         try:
