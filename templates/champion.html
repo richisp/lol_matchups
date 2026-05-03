@@ -3,11 +3,12 @@
 {% block body %}
     <p class="nav"><a href="{{ url_for('index', lane=lane, tier=tier) }}">← {{ lane }} champions</a></p>
 
-    <h1>
-        <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champ_id(champion_name) }}.png"
+    <div class="champion-header">
+        <img class="champion-portrait" src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champ_id(champion_name) }}.png"
              alt="" onerror="this.style.visibility='hidden'">
-        {{ champion_name }} <span style="color:#888;font-size:1rem;">— {{ lane }} ({{ tier }})</span>
-    </h1>
+        <span class="champion-title">{{ champion_name }}</span>
+        <span class="champion-meta">{{ lane }} · {{ tier_label(tier) }}</span>
+    </div>
 
     {% if overall %}
     <p class="meta">

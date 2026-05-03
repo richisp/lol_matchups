@@ -9,13 +9,19 @@ import db
 import lcu
 from version import __version__ as APP_VERSION
 
-# When frozen by PyInstaller, templates extract to sys._MEIPASS/templates.
+# When frozen by PyInstaller, templates + static both extract to sys._MEIPASS.
 if getattr(sys, "frozen", False):
     _template_folder = os.path.join(sys._MEIPASS, "templates")  # type: ignore[attr-defined]
+    _static_folder = os.path.join(sys._MEIPASS, "static")  # type: ignore[attr-defined]
 else:
     _template_folder = "templates"
+    _static_folder = "static"
 
-app = Flask(__name__, template_folder=_template_folder)
+app = Flask(
+    __name__,
+    template_folder=_template_folder,
+    static_folder=_static_folder,
+)
 
 
 @app.after_request
@@ -104,20 +110,32 @@ def champ_id(name: str) -> str:
 app.jinja_env.globals["champ_id"] = champ_id
 
 
-# Map our canonical lane keys to CommunityDragon's URL slugs for the
-# position-icon SVGs. "ALL" → "fill" (the autofill icon).
+# Our canonical lane keys → CommunityDragon URL slugs for the position-icon
+# SVGs. Only the five real roles; the "All" button doesn't render an icon.
 _ROLE_SLUG = {
     "TOP": "top", "JUNGLE": "jungle", "MID": "middle",
-    "BOT": "bottom", "SUPPORT": "utility", "ALL": "fill",
+    "BOT": "bottom", "SUPPORT": "utility",
 }
 
 
 def role_icon_slug(role: str) -> str:
-    return _ROLE_SLUG.get((role or "").upper(), "fill")
+    return _ROLE_SLUG.get((role or "").upper(), "top")
 
 
 app.jinja_env.globals["role_icon_slug"] = role_icon_slug
 app.jinja_env.globals["app_version"] = APP_VERSION
+
+
+def tier_label(tier: str) -> str:
+    """'emerald_plus' → 'Emerald+'; 'master' → 'Master'; 'all' → 'All'."""
+    if not tier or tier == "all":
+        return "All"
+    if tier.endswith("_plus"):
+        return tier[:-5].capitalize() + "+"
+    return tier.capitalize()
+
+
+app.jinja_env.globals["tier_label"] = tier_label
 
 
 def get_available_tiers() -> list[str]:
@@ -295,9 +313,10 @@ def index():
 
     raw_sort = request.args.get("sort") or DEFAULT_SORT
     sort_key, _, sort_desc = parse_sort(raw_sort)
-    # Normalize the URL form so the JS click handler can detect direction
-    # (the sign matches the actual direction we render).
-    sort_by = ("-" if sort_desc else "") + sort_key
+    # Always emit the sign so JS can tell ASC from "no preference" — without
+    # this, "fit" round-trips as "fit" and a user-clicked toggle to ASC gets
+    # served back as the natural-default DESC.
+    sort_by = ("-" if sort_desc else "+") + sort_key
 
     champions = get_champion_list(lane, tier, sort_by)
 
@@ -509,6 +528,10 @@ def draft():
     my_team = parse_team("my")
     enemy_team = parse_team("enemy")
     bans = parse_bans()
+    # LCU-detected bans split by team — used only for the visual icon row
+    # under each team. The combined `bans` field still drives scoring.
+    my_bans_list = [b.strip() for b in (request.args.get("my_bans") or "").split(",") if b.strip()]
+    enemy_bans_list = [b.strip() for b in (request.args.get("enemy_bans") or "").split(",") if b.strip()]
 
     # Strip the active slot from my_team for scoring (it's the one we're filling).
     my_team_for_scoring = {k: v for k, v in my_team.items() if k != active}
@@ -536,7 +559,8 @@ def draft():
             key=lambda c: (c[sort_col] is None, c[sort_col] or 0),
             reverse=sort_desc,
         )
-    sort_by = ("-" if sort_desc else "") + sort_key
+    # Always signed — see comment in `index()` route.
+    sort_by = ("-" if sort_desc else "+") + sort_key
 
     return render_template(
         "draft.html",
@@ -546,8 +570,12 @@ def draft():
         available_tiers=available_tiers,
         my_team=my_team,
         enemy_team=enemy_team,
-        bans=sorted(bans),
         bans_str=",".join(sorted(bans)),
+        my_bans=my_bans_list,
+        enemy_bans=enemy_bans_list,
+        my_bans_str=",".join(my_bans_list),
+        enemy_bans_str=",".join(enemy_bans_list),
+        ban_slots=range(5),
         candidates=candidates,
         champ_names=champ_names,
         dd_version=get_dd_version(),
@@ -583,9 +611,9 @@ def champion_matchups(champion_name: str):
     except ValueError:
         min_games = 30
 
-    sort_by = request.args.get("sort", "winrate")
+    sort_by = request.args.get("sort", "games")
     if sort_by not in MATCHUP_SORT_KEYS:
-        sort_by = "winrate"
+        sort_by = "games"
 
     matchups = get_matchups(champion_name, lane, tier, matchup_type, min_games, sort_by)
 
