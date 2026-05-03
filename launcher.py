@@ -69,7 +69,10 @@ if sys.platform == "win32":
             logging.info("SHChangeNotify failed: %s", e)
 
 PORT = 5050
-URL = f"http://127.0.0.1:{PORT}/draft"
+# Cache-bust the URL on each launch so the embedded WebView2 (which keeps a
+# user-data folder shared across .exe versions) can't serve stale HTML from
+# the previous version after an auto-update.
+URL = f"http://127.0.0.1:{PORT}/draft?_v={int(time.time())}"
 
 
 def _start_flask() -> None:
@@ -79,9 +82,81 @@ def _start_flask() -> None:
     app.run(host="127.0.0.1", port=PORT, debug=False, use_reloader=False, threaded=True)
 
 
+def _show_update_dialog_and_apply(release_info: dict) -> None:
+    """Block on a small Tk progress dialog while the update downloads and
+    spawns the swap script. Caller should sys.exit afterwards."""
+    import tkinter as tk
+    from tkinter import ttk
+
+    root = tk.Tk()
+    root.title("LoL Draft Helper")
+    root.geometry("380x140")
+    root.resizable(False, False)
+    root.attributes("-topmost", True)
+    # No close button — don't let the user cancel a half-applied update.
+    root.protocol("WM_DELETE_WINDOW", lambda: None)
+    try:
+        root.eval("tk::PlaceWindow . center")
+    except tk.TclError:
+        pass
+
+    main_label = tk.Label(
+        root,
+        text=f"Updating to v{release_info['version']}",
+        font=("Segoe UI", 11),
+    )
+    main_label.pack(pady=(22, 8))
+
+    progress = ttk.Progressbar(root, length=320, mode="determinate", maximum=100)
+    progress.pack(pady=(0, 6))
+
+    sub_label = tk.Label(root, text="Connecting…", font=("Segoe UI", 9), fg="#666")
+    sub_label.pack(pady=(0, 12))
+
+    def on_progress(downloaded: int, total: int) -> None:
+        pct = (downloaded / total) * 100 if total else 0
+        progress["value"] = pct
+        sub_label.config(
+            text=f"{downloaded / 1_000_000:.1f} / {total / 1_000_000:.1f} MB",
+        )
+        # Pump the Tk event loop so the bar actually redraws while the
+        # download blocks the main thread.
+        try:
+            root.update()
+        except tk.TclError:
+            pass
+
+    # Let the window paint at least once before we start downloading.
+    root.update()
+
+    try:
+        scheduled = updater.apply_update(release_info, progress_cb=on_progress)
+        if scheduled:
+            main_label.config(text="Restarting…")
+            sub_label.config(text="")
+            progress["value"] = 100
+            root.update()
+            time.sleep(0.6)  # let the user see "Restarting…" briefly
+        else:
+            main_label.config(text="Update failed")
+            sub_label.config(text="See lol-draft-helper.log for details.")
+            root.update()
+            time.sleep(2.0)
+    except Exception as e:  # noqa: BLE001
+        logging.warning("update UI: %s", e)
+    finally:
+        try:
+            root.destroy()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def main() -> None:
-    # 1. Auto-update first — exits this process if a swap is scheduled.
-    if updater.check_and_apply():
+    # 1. Auto-update — show a progress dialog only if there's actually an
+    #    update to fetch. The cheap detection step doesn't paint UI.
+    info = updater.check_for_update()
+    if info is not None:
+        _show_update_dialog_and_apply(info)
         sys.exit(0)
 
     # 2. Sync the DB before any sqlite connection opens.

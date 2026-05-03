@@ -105,19 +105,37 @@ def _find_exe_asset(release: dict) -> dict | None:
     return None
 
 
-def _download(url: str, dest: Path, timeout: float, expected_size: int | None = None) -> None:
+def _download(
+    url: str,
+    dest: Path,
+    timeout: float,
+    expected_size: int | None = None,
+    progress_cb=None,
+) -> None:
     """Stream a download to dest, verifying the final size matches the asset's
     declared size. Truncated downloads (network blip, server hangup) would
     otherwise produce a corrupt PyInstaller .exe whose bootloader fails to
     unpack and dies with cryptic missing-DLL errors.
+
+    If `progress_cb` is provided it's called per chunk as
+    progress_cb(downloaded_bytes, total_bytes). The callback runs on the
+    same thread as the download — keep it cheap.
     """
     # GitHub release-asset URLs 302-redirect to a signed CDN URL — follow_redirects
     # must be on or we'd just receive the redirect response and try to write that.
     with httpx.stream("GET", url, timeout=timeout, follow_redirects=True) as r:
         r.raise_for_status()
+        total = int(r.headers.get("content-length") or 0) or (expected_size or 0)
+        written = 0
         with open(dest, "wb") as f:
             for chunk in r.iter_bytes(64 * 1024):
                 f.write(chunk)
+                written += len(chunk)
+                if progress_cb is not None and total:
+                    try:
+                        progress_cb(written, total)
+                    except Exception:  # noqa: BLE001 — UI errors mustn't kill download
+                        pass
     if expected_size is not None:
         actual = dest.stat().st_size
         if actual != expected_size:
@@ -275,15 +293,16 @@ Remove-Item -Force -LiteralPath $selfPath -ErrorAction SilentlyContinue
     )
 
 
-def check_and_apply(repo: str | None = None, timeout: float = 5.0) -> bool:
-    """Check for a newer app release and, if found, swap-and-relaunch.
+def check_for_update(repo: str | None = None, timeout: float = 5.0) -> dict | None:
+    """Cheap "is there a new release?" check — does the API call but no
+    download. Returns a release-info dict when an update is available, or
+    None otherwise.
 
-    Returns True if an update is in progress (the caller should exit). Returns
-    False if no update is available, the check failed, or we're not frozen.
+    Result shape: {"version": "0.1.22", "asset_url": "...", "asset_size": int}
     """
     if not _is_frozen():
         log.debug("updater: not running as frozen .exe — skipping check.")
-        return False
+        return None
 
     repo = repo or config.GITHUB_REPO
     local_v = _local_version()
@@ -297,35 +316,56 @@ def check_and_apply(repo: str | None = None, timeout: float = 5.0) -> bool:
         latest = _latest_app_release(repo, timeout)
     except (httpx.HTTPError, ValueError) as e:
         log.info("updater: release lookup failed — %s", e)
-        return False
+        return None
     if not latest:
         log.info("updater: no /releases/latest available.")
-        return False
+        return None
 
     tag = latest.get("tag_name", "")
     m = VERSION_RE.match(tag)
     if not m:
         log.info("updater: latest tag %r isn't vX.Y.Z — skipping.", tag)
-        return False
+        return None
     remote_v = m.group(1)
     if not forced and _parse(remote_v) <= _parse(local_v):
         log.info("updater: already on latest (%s).", local_v)
-        return False
+        return None
 
     asset = _find_exe_asset(latest)
     if not asset:
         log.info("updater: no .exe asset on release %s.", tag)
+        return None
+
+    return {
+        "version": remote_v,
+        "asset_url": asset["browser_download_url"],
+        "asset_size": asset.get("size"),
+    }
+
+
+def apply_update(release_info: dict, progress_cb=None) -> bool:
+    """Download the new .exe and spawn the swap script. Caller is expected to
+    have already determined an update is needed (via check_for_update).
+
+    `progress_cb(downloaded, total)` is called during the download — useful
+    for driving a UI progress bar. Returns True if the swap was scheduled
+    successfully (caller should exit so the swap can run).
+    """
+    if not _is_frozen():
         return False
 
     current_exe = Path(sys.executable)
+    remote_v = release_info["version"]
     new_exe = current_exe.with_name(current_exe.stem + f".{remote_v}.new.exe")
-    expected_size = asset.get("size")
-    log.info("updater: downloading %s (%s bytes) → %s",
-             asset["name"], expected_size, new_exe)
+    expected_size = release_info.get("asset_size")
+    log.info("updater: downloading v%s (%s bytes) → %s",
+             remote_v, expected_size, new_exe)
     try:
         _download(
-            asset["browser_download_url"], new_exe,
-            timeout=120.0, expected_size=expected_size,
+            release_info["asset_url"], new_exe,
+            timeout=120.0,
+            expected_size=expected_size,
+            progress_cb=progress_cb,
         )
     except (httpx.HTTPError, OSError) as e:
         log.warning("updater: download failed — %s", e)
@@ -343,6 +383,14 @@ def check_and_apply(repo: str | None = None, timeout: float = 5.0) -> bool:
         log.warning("updater: failed to spawn swap script — %s", e)
         return False
 
-    # Give the spawn a moment to start before we exit.
     time.sleep(0.2)
     return True
+
+
+def check_and_apply(repo: str | None = None, timeout: float = 5.0) -> bool:
+    """Backward-compat wrapper: detect + apply in one call. Use the split
+    pair (check_for_update / apply_update) when you want a UI in between."""
+    info = check_for_update(repo=repo, timeout=timeout)
+    if info is None:
+        return False
+    return apply_update(info)

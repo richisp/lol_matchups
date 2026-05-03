@@ -55,6 +55,9 @@ a = Analysis(
         "sync",
         "updater",
         "version",
+        # Tk progress dialog shown during auto-update.
+        "tkinter",
+        "tkinter.ttk",
     ],
     hookspath=[],
     hooksconfig={},
