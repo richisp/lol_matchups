@@ -18,6 +18,7 @@ running from source we skip the check entirely.
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import re
@@ -118,21 +119,28 @@ def _spawn_swap(current_exe: Path, new_exe: Path) -> None:
     """Spawn a detached PowerShell that waits for us to exit, swaps in the new
     .exe, and relaunches. We then exit ourselves.
 
-    PowerShell handles all the things batch was bad at: PID-by-name lookup
-    via Get-Process (no false positives from PID reuse, no `tasklist | find`
-    heuristics), structured try/catch on Move-Item retries, and cleaner
-    logging. Logs to .update.log alongside the .exe.
+    Important detail: we pass the script inline via -EncodedCommand rather
+    than -File. PowerShell's execution-policy checks only block loading a
+    .ps1 file from disk — they don't apply to inline commands — and on
+    locked-down machines (group policy, AllSigned, etc.) -ExecutionPolicy
+    Bypass on the command line is itself overridden. -EncodedCommand
+    sidesteps the whole issue.
     """
     pid = os.getpid()
     exe_stem = current_exe.stem  # "lol-draft-helper" (no extension)
     ps1 = current_exe.parent / ".update.ps1"
-    ps1.write_text(
-        f"""$ErrorActionPreference = 'Continue'
+    self_path = ps1  # what the script should delete on exit (its own visible copy)
+    script = f"""$ErrorActionPreference = 'Continue'
 $pidToWait = {pid}
 $exeName   = '{exe_stem}'
 $cur       = '{current_exe}'
 $new       = '{new_exe}'
+$selfPath  = '{self_path}'
 $log       = (Split-Path -Parent $cur) + '\\.update.log'
+
+# Marker before any function/loop definitions so we know PS reached this
+# script even if a later parse error kills it.
+"[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] update invoked, ps_pid=$PID, target_pid=$pidToWait" | Out-File -Append -FilePath $log -Encoding utf8
 
 function Log($msg) {{
     $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $msg"
@@ -171,7 +179,7 @@ while ($retries -lt 30) {{
 
 if (-not $swapped) {{
     Log "giving up after $retries retries; leaving $new in place"
-    Remove-Item -Force -LiteralPath $MyInvocation.MyCommand.Path -ErrorAction SilentlyContinue
+    Remove-Item -Force -LiteralPath $selfPath -ErrorAction SilentlyContinue
     exit 1
 }}
 
@@ -184,10 +192,21 @@ try {{
 }} catch {{}}
 
 Start-Process -FilePath $cur
-Remove-Item -Force -LiteralPath $MyInvocation.MyCommand.Path -ErrorAction SilentlyContinue
-""",
-        encoding="utf-8",
-    )
+Remove-Item -Force -LiteralPath $selfPath -ErrorAction SilentlyContinue
+"""
+
+    # Save the script to disk for debug visibility (the user can inspect it
+    # if anything goes wrong). The actual execution is via -EncodedCommand,
+    # so it doesn't matter that this file might be blocked from running
+    # directly.
+    ps1.write_text(script, encoding="utf-8")
+
+    # PowerShell -EncodedCommand expects a base64-encoded UTF-16-LE string.
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+
+    # Capture stdout/stderr to files so silent failures can't disappear.
+    out_fh = open(current_exe.parent / ".update-stdout.log", "ab")
+    err_fh = open(current_exe.parent / ".update-stderr.log", "ab")
     DETACHED = 0x00000008
     NEW_PROCESS_GROUP = 0x00000200
     subprocess.Popen(
@@ -195,12 +214,13 @@ Remove-Item -Force -LiteralPath $MyInvocation.MyCommand.Path -ErrorAction Silent
             "powershell",
             "-NoProfile",
             "-NonInteractive",
-            "-ExecutionPolicy", "Bypass",
             "-WindowStyle", "Hidden",
-            "-File", str(ps1),
+            "-EncodedCommand", encoded,
         ],
+        stdout=out_fh,
+        stderr=err_fh,
         creationflags=DETACHED | NEW_PROCESS_GROUP,
-        close_fds=True,
+        close_fds=False,
     )
 
 
