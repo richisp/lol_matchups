@@ -207,19 +207,23 @@ Remove-Item -Force -LiteralPath $selfPath -ErrorAction SilentlyContinue
     # Capture stdout/stderr to files so silent failures can't disappear.
     out_fh = open(current_exe.parent / ".update-stdout.log", "ab")
     err_fh = open(current_exe.parent / ".update-stderr.log", "ab")
-    DETACHED = 0x00000008
+    # CREATE_NO_WINDOW (not DETACHED_PROCESS) for a hidden console child:
+    # DETACHED strips the child's console association entirely and PowerShell
+    # has been observed to silently bail in that mode. CREATE_NO_WINDOW gives
+    # the child its own (hidden) console, keeps stdio redirection working,
+    # and CREATE_NEW_PROCESS_GROUP keeps it alive after the launcher exits.
+    CREATE_NO_WINDOW = 0x08000000
     NEW_PROCESS_GROUP = 0x00000200
     subprocess.Popen(
         [
             "powershell",
             "-NoProfile",
             "-NonInteractive",
-            "-WindowStyle", "Hidden",
             "-EncodedCommand", encoded,
         ],
         stdout=out_fh,
         stderr=err_fh,
-        creationflags=DETACHED | NEW_PROCESS_GROUP,
+        creationflags=CREATE_NO_WINDOW | NEW_PROCESS_GROUP,
         close_fds=False,
     )
 
