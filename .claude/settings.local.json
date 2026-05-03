@@ -8,7 +8,8 @@
       "Bash(.venv/Scripts/python -c \"from launcher import main; print\\('launcher OK'\\)\")",
       "Bash(.venv/Scripts/pip install *)",
       "Bash(.venv/Scripts/python -c \"from launcher import main; print\\('launcher imports OK'\\)\")",
-      "Bash(.venv/Scripts/pyinstaller --clean --noconfirm lol_matchups.spec)"
+      "Bash(.venv/Scripts/pyinstaller --clean --noconfirm lol_matchups.spec)",
+      "Bash(.venv/Scripts/python -c \"from launcher import main; print\\('OK'\\)\")"
     ]
   }
 }
