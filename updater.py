@@ -206,7 +206,18 @@ try {{
     [W.S]::SHChangeNotify(0x08000000, 0, [System.IntPtr]::Zero, [System.IntPtr]::Zero)
 }} catch {{}}
 
-Start-Process -FilePath $cur
+# Launch the new .exe via ShellExecute (UseShellExecute=$true) instead of
+# Start-Process. The PowerShell we're running in has its stdout/stderr
+# redirected to .update-stdout.log / .update-stderr.log, and any handle
+# inheritance through Start-Process can break PyInstaller's bootloader on
+# the child. ShellExecute spawns the process as if from Explorer — clean
+# process context, no inherited stdio, no file-handle leaks.
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = $cur
+$psi.WorkingDirectory = Split-Path -Parent $cur
+$psi.UseShellExecute = $true
+[System.Diagnostics.Process]::Start($psi) | Out-Null
+
 Remove-Item -Force -LiteralPath $selfPath -ErrorAction SilentlyContinue
 """
 
@@ -222,6 +233,18 @@ Remove-Item -Force -LiteralPath $selfPath -ErrorAction SilentlyContinue
     # Capture stdout/stderr to files so silent failures can't disappear.
     out_fh = open(current_exe.parent / ".update-stdout.log", "ab")
     err_fh = open(current_exe.parent / ".update-stderr.log", "ab")
+
+    # CRITICAL: strip PyInstaller's internal env vars before spawning the swap
+    # script. They point at *our* _MEI<pid> extraction dir, and would be
+    # inherited through PowerShell into the relaunched .exe. The new .exe's
+    # bootloader would then think it's already extracted (using our path)
+    # instead of unpacking its own files — and by the time it tries to
+    # LoadLibrary python312.dll, our dir has been torn down on parent exit.
+    child_env = {
+        k: v for k, v in os.environ.items()
+        if not (k.startswith("_PYI") or k.startswith("PYINSTALLER_"))
+    }
+
     # CREATE_NO_WINDOW (not DETACHED_PROCESS) for a hidden console child:
     # DETACHED strips the child's console association entirely and PowerShell
     # has been observed to silently bail in that mode. CREATE_NO_WINDOW gives
@@ -238,6 +261,7 @@ Remove-Item -Force -LiteralPath $selfPath -ErrorAction SilentlyContinue
         ],
         stdout=out_fh,
         stderr=err_fh,
+        env=child_env,
         creationflags=CREATE_NO_WINDOW | NEW_PROCESS_GROUP,
         close_fds=False,
     )
