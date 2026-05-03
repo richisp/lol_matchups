@@ -46,6 +46,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ("templates", "templates"),
+        ("static", "static"),
     ],
     hiddenimports=[
         # pywebview's runtime backend + Flask's auto-detected modules

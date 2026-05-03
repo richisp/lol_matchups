@@ -232,12 +232,37 @@ def normalize_session(
                         break
         break
 
-    bans: list[str] = []
-    for action_group in session.get("actions") or []:
-        for action in action_group:
-            if action.get("type") == "ban" and action.get("completed"):
-                cid = action.get("championId")
-                if cid:
+    # Bans appear in two places in the session payload:
+    #   session["bans"]["myTeamBans"]/["theirTeamBans"]: lists of championIds
+    #     (≤0 = empty slot). This is the most reliable source for *locked*
+    #     bans split by team — useful for the per-team visual.
+    #   session["actions"]: nested action groups including in-flight hovers;
+    #     "completed" filters down to locked bans, but doesn't tell us which
+    #     team. We fall back here only when the structured field is empty.
+    def _resolve(cids: list[int]) -> list[str]:
+        out: list[str] = []
+        for cid in cids or []:
+            if cid and cid > 0:
+                name = champion_name_by_key(cid, dd_version)
+                if name:
+                    out.append(name)
+        return out
+
+    ban_data = session.get("bans") or {}
+    my_bans = _resolve(ban_data.get("myTeamBans") or [])
+    enemy_bans = _resolve(ban_data.get("theirTeamBans") or [])
+    bans: list[str] = list(my_bans) + list(enemy_bans)
+
+    if not bans:
+        # Fallback: scan the actions array for any completed bans we missed.
+        seen: set[int] = set()
+        for action_group in session.get("actions") or []:
+            for action in action_group:
+                if action.get("type") != "ban" or not action.get("completed"):
+                    continue
+                cid = action.get("championId") or 0
+                if cid > 0 and cid not in seen:
+                    seen.add(cid)
                     name = champion_name_by_key(cid, dd_version)
                     if name:
                         bans.append(name)
@@ -250,6 +275,8 @@ def normalize_session(
         "my_team": my_team,
         "enemy_team": enemy_team,
         "bans": bans,
+        "my_bans": my_bans,
+        "enemy_bans": enemy_bans,
     }
 
 

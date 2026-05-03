@@ -2,17 +2,11 @@
 {% block title %}Champ select helper — LoL Draft{% endblock %}
 {% block body %}
     <div class="draft-layout">
-    <h1 style="margin-bottom: 0.4rem;">Champ select helper</h1>
-    <p class="page-help">
-        Fill in picks → recommendations update for the slot marked <strong>Your pick</strong>.
-    </p>
-
     <div class="toolbar">
-        <label class="toolbar-field">
-            <span>Tier</span>
+        <label class="toolbar-field tier-picker" title="{{ tier_label(tier) }}">
             <select form="draft-form" name="tier">
                 {% for t in available_tiers %}
-                    <option value="{{ t }}" {% if t == tier %}selected{% endif %}>{{ t }}</option>
+                    <option value="{{ t }}" {% if t == tier %}selected{% endif %}>{{ tier_label(t) }}</option>
                 {% endfor %}
             </select>
         </label>
@@ -30,9 +24,23 @@
     <form id="draft-form" method="get" action="{{ url_for('draft') }}">
         <input type="hidden" name="active" value="{{ active }}" id="active-input">
         <input type="hidden" name="sort" value="{{ sort_by }}" id="rec-sort-input">
+        <input type="hidden" name="my_bans" value="{{ my_bans_str }}" id="my-bans-input">
+        <input type="hidden" name="enemy_bans" value="{{ enemy_bans_str }}" id="enemy-bans-input">
         <div class="draft-board">
             <div class="team team-mine">
                 <h2>Your team</h2>
+                <div class="team-bans" title="Your team's bans">
+                    {% for i in ban_slots %}
+                    {% set ban = my_bans[i] if my_bans|length > i else None %}
+                    <div class="ban-slot {% if ban %}filled{% endif %}">
+                        {% if ban %}
+                        <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champ_id(ban) }}.png"
+                             alt="{{ ban }}" title="{{ ban }} (banned)"
+                             onerror="this.style.visibility='hidden'">
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
                 {% for pos in positions %}
                 <div class="slot {% if pos == active %}slot-active{% endif %}">
                     <button type="button" class="slot-pick" data-active="{{ pos }}"
@@ -146,6 +154,18 @@
 
             <div class="team team-enemy">
                 <h2>Enemy team</h2>
+                <div class="team-bans" title="Enemy team's bans">
+                    {% for i in ban_slots %}
+                    {% set ban = enemy_bans[i] if enemy_bans|length > i else None %}
+                    <div class="ban-slot {% if ban %}filled{% endif %}">
+                        {% if ban %}
+                        <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champ_id(ban) }}.png"
+                             alt="{{ ban }}" title="{{ ban }} (banned)"
+                             onerror="this.style.visibility='hidden'">
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
                 {% for pos in positions %}
                 <div class="slot">
                     <div class="slot-row">
@@ -169,12 +189,7 @@
             </div>
         </div>
 
-        <div class="bans-row">
-            <label>Bans (comma-separated)
-                <input type="text" name="bans" value="{{ bans_str }}" placeholder="e.g. Yasuo, Yone">
-            </label>
-            <button type="submit">Apply</button>
-        </div>
+        <input type="hidden" name="bans" value="{{ bans_str }}">
     </form>
 
     <div id="rec-tooltip" class="rec-tooltip" hidden></div>
@@ -183,535 +198,9 @@
         {% for n in champ_names %}<option value="{{ n }}">{% endfor %}
     </datalist>
 
-    <style>
-        /* Page is viewport-bounded; only the recs list scrolls. */
-        .draft-layout {
-            display: flex;
-            flex-direction: column;
-            /* fill remaining viewport height below the body's top padding +
-               nav. Approximate; tolerant of small mismatches. */
-            height: calc(100vh - 5rem);
-            min-height: 480px;
-        }
+    <link rel='stylesheet' href="{{ url_for('static', filename='css/draft.css') }}">
 
-        /* Make the draft form a flex column so the board can claim the
-           remaining vertical space (and the recs scroller inside it can be
-           bounded for overflow:auto). */
-        #draft-form {
-            display: flex;
-            flex-direction: column;
-            flex: 1;
-            min-height: 0;
-        }
-
-        .page-help { color: #777; font-size: 0.85rem; margin: 0 0 1rem; }
-
-        .toolbar {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            background: #18181b;
-            border: 1px solid #2a2a2e;
-            border-radius: 8px;
-            padding: 0.55rem 0.9rem;
-            margin-bottom: 1.25rem;
-        }
-        /* Override base.html's "label { display: flex; flex-direction: column }". */
-        .toolbar-field, .toolbar-toggle {
-            display: flex;
-            flex-direction: row;
-            align-items: center;
-            gap: 0.5rem;
-            color: #aaa;
-            font-size: 0.85rem;
-            text-transform: none;
-            letter-spacing: 0;
-        }
-        .toolbar-field select {
-            padding: 0.3rem 0.55rem;
-            font-size: 0.88rem;
-        }
-        .toolbar-toggle { margin-left: auto; cursor: pointer; }
-        .toolbar-toggle input[type="checkbox"] { margin: 0; }
-
-        .draft-board {
-            display: grid;
-            grid-template-columns: 320px 1fr 320px;
-            grid-template-rows: minmax(0, 1fr);
-            gap: 1.25rem;
-            margin-bottom: 1rem;
-            flex: 1;
-            min-height: 0;
-        }
-        .bans-row { flex: 0 0 auto; }
-
-        .team h2, .recs h2 {
-            font-size: 0.78rem;
-            font-weight: 600;
-            letter-spacing: 1.4px;
-            margin: 0 0 0.75rem;
-            text-transform: uppercase;
-        }
-        .team-mine h2 { color: #5b8def; }
-        .team-enemy h2 { color: #e85a5a; }
-        .recs h2 { color: #888; }
-        .meta-inline { color: #777; font-size: 0.85rem; font-weight: 400; letter-spacing: 0; text-transform: none; }
-
-        .slot {
-            background: #18181b;
-            border: 1px solid #2a2a2e;
-            border-radius: 8px;
-            padding: 0;
-            margin-bottom: 0.6rem;
-            overflow: hidden;
-            transition: border-color 0.15s, box-shadow 0.15s;
-        }
-        .team-mine .slot:hover { border-color: #34343a; }
-        .slot-active {
-            border-color: #5b8def;
-            box-shadow: 0 0 0 1px #5b8def, 0 0 14px -4px rgba(91, 141, 239, 0.55);
-        }
-        .slot-pick {
-            width: 100%;
-            text-align: left;
-            background: transparent;
-            color: #555;
-            border: none;
-            padding: 0.5rem 0.75rem 0.15rem;
-            cursor: pointer;
-            font-family: inherit;
-            font-size: 0.68rem;
-            text-transform: uppercase;
-            letter-spacing: 0.8px;
-        }
-        .slot-pick:hover { color: #aaa; }
-        .slot-active .slot-pick { color: #5b8def; font-weight: 600; }
-
-        .slot-row {
-            display: flex;
-            align-items: center;
-            gap: 0.7rem;
-            padding: 0.4rem 0.75rem 0.6rem;
-        }
-        .team-enemy .slot-row { padding: 0.7rem 0.75rem; }
-        .slot-icon {
-            width: 52px;
-            height: 52px;
-            flex: 0 0 52px;
-            background: #232328;
-            border-radius: 6px;
-            overflow: hidden;
-        }
-        .slot-icon img { width: 52px; height: 52px; display: block; }
-        .slot-fields { flex: 1; min-width: 0; }
-        .slot-lane {
-            font-size: 0.7rem;
-            color: #aaa;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            font-weight: 600;
-            margin-bottom: 0.25rem;
-        }
-        .slot-fields input {
-            background: #232328;
-            color: #e6e6e6;
-            border: 1px solid #34343a;
-            padding: 0.35rem 0.5rem;
-            border-radius: 4px;
-            font-size: 0.9rem;
-            width: 100%;
-            font-family: inherit;
-        }
-        .slot-fields input:focus {
-            outline: none;
-            border-color: #5b8def;
-        }
-
-        .recs {
-            display: flex;
-            flex-direction: column;
-            min-height: 0;
-        }
-        .recs-scroll {
-            flex: 1;
-            min-height: 0;
-            overflow-y: auto;
-            scrollbar-width: thin;
-            scrollbar-color: #34343a transparent;
-        }
-        .recs-scroll::-webkit-scrollbar { width: 6px; }
-        .recs-scroll::-webkit-scrollbar-thumb { background: #34343a; border-radius: 3px; }
-        .recs-table {
-            width: 100%;
-            border-collapse: collapse;
-            background: #18181b;
-            border-radius: 8px;
-            overflow: hidden;
-        }
-        .recs-table th { padding: 0.55rem 0.75rem; }
-        .recs-table th.th-sort { cursor: pointer; user-select: none; }
-        .recs-table th.th-sort:hover { color: #e6e6e6; }
-        .recs-table th.sorted-asc::after  { content: ' ▲'; color: #5b8def; font-size: 0.7em; }
-        .recs-table th.sorted-desc::after { content: ' ▼'; color: #5b8def; font-size: 0.7em; }
-        .recs-table td { padding: 0.4rem 0.75rem; }
-        .recs-table tr:hover td { background: #1f1f23; }
-        .recs-table .champ { display: flex; align-items: center; gap: 0.6rem; }
-        .recs-table .champ img { width: 32px; height: 32px; border-radius: 4px; }
-        .rec-pick {
-            background: transparent;
-            color: inherit;
-            border: none;
-            padding: 0;
-            cursor: pointer;
-            font-family: inherit;
-            font-size: 0.95rem;
-            font-weight: 500;
-            text-align: left;
-        }
-        .rec-pick:hover { color: #5b8def; }
-
-        .bans-row {
-            display: flex;
-            gap: 1rem;
-            align-items: end;
-            background: #18181b;
-            border: 1px solid #2a2a2e;
-            border-radius: 8px;
-            padding: 0.75rem 1rem;
-        }
-        .bans-row label { flex: 1; }
-        .bans-row input { width: 100%; }
-
-        .lcu-badge {
-            display: inline-block;
-            padding: 0.3rem 0.7rem;
-            border-radius: 999px;
-            font-size: 0.72rem;
-            font-weight: 500;
-            letter-spacing: 0.3px;
-        }
-        .lcu-unknown { background: #2a2a2e; color: #999; }
-        .lcu-off     { background: #3a2222; color: #e85a5a; }
-        .lcu-idle    { background: #2a2a3a; color: #aaa; }
-        .lcu-live    { background: #1f3a25; color: #5cd65c; }
-
-        /* Hover tooltip showing the per-pick breakdown for a recommendation. */
-        .rec-tooltip {
-            position: fixed;
-            z-index: 100;
-            background: #18181b;
-            border: 1px solid #34343a;
-            border-radius: 8px;
-            padding: 0.7rem 0.85rem;
-            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
-            min-width: 320px;
-            max-width: 420px;
-            pointer-events: none;
-            font-size: 0.85rem;
-        }
-        .rec-tooltip[hidden] { display: none; }
-        .rec-row { cursor: default; }
-
-        .bk-header {
-            display: flex; justify-content: space-between; align-items: baseline;
-            gap: 1rem; margin-bottom: 0.15rem;
-        }
-        .bk-header strong { font-size: 1rem; font-weight: 600; }
-        .bk-fit { color: #888; font-size: 0.78rem; }
-        .bk-base { color: #777; font-size: 0.75rem; margin-bottom: 0.55rem; }
-
-        .bk-section { margin-top: 0.55rem; }
-        .bk-section-title {
-            display: flex; justify-content: space-between; align-items: baseline;
-            color: #999; font-size: 0.7rem; font-weight: 600;
-            text-transform: uppercase; letter-spacing: 0.8px;
-            border-bottom: 1px solid #2a2a2e;
-            padding-bottom: 0.25rem; margin-bottom: 0.3rem;
-        }
-        .bk-section-total {
-            font-weight: 600; letter-spacing: 0; text-transform: none;
-            font-size: 0.82rem; font-variant-numeric: tabular-nums;
-        }
-        .bk-table { width: 100%; border-collapse: collapse; }
-        .bk-table td {
-            padding: 0.18rem 0.35rem;
-            font-variant-numeric: tabular-nums;
-        }
-        .bk-table td:first-child { padding-left: 0; }
-        .bk-table td:last-child  { padding-right: 0; }
-        .bk-name { color: #e6e6e6; font-size: 0.86rem; }
-        .bk-lane { color: #888; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.4px; }
-        .bk-wr { color: #aaa; text-align: right; font-size: 0.82rem; }
-        .bk-games { color: #666; font-size: 0.72rem; text-align: right; }
-        .bk-faded { color: #555; font-style: italic; }
-        .bk-contrib { font-weight: 600; text-align: right; font-size: 0.86rem; }
-        .bk-empty { color: #666; font-size: 0.78rem; padding: 0.15rem 0; }
-
-        /* base.html only colors `.winrate.good` / `.winrate.bad`. Color the
-           remaining .good/.bad cells (vs, w/, Risk) and tooltip contribs. */
-        .recs-table td.good { color: #5cd65c; font-weight: 600; }
-        .recs-table td.bad  { color: #e85a5a; font-weight: 600; }
-        .rec-tooltip .good { color: #5cd65c; }
-        .rec-tooltip .bad  { color: #e85a5a; }
-        .bk-risk {
-            display: flex; justify-content: space-between; align-items: baseline;
-            margin-top: 0.55rem; padding-top: 0.4rem;
-            border-top: 1px solid #2a2a2e;
-            color: #999; font-size: 0.75rem; font-weight: 600;
-            text-transform: uppercase; letter-spacing: 0.7px;
-        }
-        .bk-risk span {
-            font-weight: 600; letter-spacing: 0; text-transform: none;
-            font-size: 0.85rem; font-variant-numeric: tabular-nums;
-        }
-    </style>
-
-    <script>
-        // ---- AJAX refresh: re-render the draft form in place instead of
-        //      doing a full-page navigation. Preserves scroll position and
-        //      avoids the constant reload churn during champ select.
-        let inflight = null;
-        async function refreshDraft() {
-            if (inflight) inflight.abort();
-            const ctrl = new AbortController();
-            inflight = ctrl;
-
-            const form = document.getElementById('draft-form');
-            const params = new URLSearchParams();
-            // FormData picks up controls associated via form="draft-form" too
-            // (e.g. the tier select). Last-wins on duplicate keys.
-            for (const [k, v] of new FormData(form)) {
-                if (v !== '') params.set(k, v);
-            }
-            const url = `/draft?${params.toString()}`;
-            history.replaceState({}, '', url);
-
-            // Preserve recs scroll across the swap.
-            const oldScroll = document.querySelector('.recs-scroll');
-            const savedScrollTop = oldScroll ? oldScroll.scrollTop : 0;
-
-            // Preserve focus + cursor position. Otherwise an LCU-driven swap
-            // happening while the user is clicking/typing in an input will
-            // blow away their focus, making clicks feel unresponsive.
-            const focused = document.activeElement;
-            let focusInfo = null;
-            if (focused && form.contains(focused) && focused.name) {
-                focusInfo = { name: focused.name };
-                if (typeof focused.selectionStart === 'number') {
-                    focusInfo.selStart = focused.selectionStart;
-                    focusInfo.selEnd = focused.selectionEnd;
-                }
-            }
-
-            try {
-                const r = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
-                if (!r.ok) return;
-                const html = await r.text();
-                const doc = new DOMParser().parseFromString(html, 'text/html');
-                const newForm = doc.getElementById('draft-form');
-                if (newForm) {
-                    form.replaceWith(newForm);
-                    const newScroll = document.querySelector('.recs-scroll');
-                    if (newScroll) newScroll.scrollTop = savedScrollTop;
-                    if (focusInfo) {
-                        const target = newForm.querySelector(`[name="${focusInfo.name}"]`);
-                        if (target) {
-                            target.focus();
-                            if (focusInfo.selStart != null && target.setSelectionRange) {
-                                try { target.setSelectionRange(focusInfo.selStart, focusInfo.selEnd); }
-                                catch (_) { /* not all input types support selection */ }
-                            }
-                        }
-                    }
-                }
-            } catch (e) {
-                if (e.name !== 'AbortError') console.error('refresh error', e);
-            } finally {
-                if (inflight === ctrl) inflight = null;
-            }
-        }
-
-        // Event delegation: handlers stay live after refreshDraft swaps the form.
-        const RECS_NATURAL_DESC = new Set(['fit', 'base', 'counter', 'synergy']);
-
-        document.addEventListener('click', (e) => {
-            const slotPick = e.target.closest('.slot-pick');
-            if (slotPick) {
-                e.preventDefault();
-                document.getElementById('active-input').value = slotPick.dataset.active;
-                refreshDraft();
-                return;
-            }
-            const recPick = e.target.closest('.rec-pick');
-            if (recPick) {
-                e.preventDefault();
-                const active = document.getElementById('active-input').value;
-                const slot = document.querySelector(`input[name="my_${active}"]`);
-                if (slot) {
-                    slot.value = recPick.dataset.name;
-                    refreshDraft();
-                }
-                return;
-            }
-            const sortHeader = e.target.closest('.recs-table th[data-sort]');
-            if (sortHeader) {
-                e.preventDefault();
-                const col = sortHeader.dataset.sort;
-                const inp = document.getElementById('rec-sort-input');
-                const current = inp ? inp.value : '';
-                let next;
-                if (current === col)            next = '-' + col;
-                else if (current === '-' + col) next = col;
-                else                            next = RECS_NATURAL_DESC.has(col) ? '-' + col : col;
-                if (inp) inp.value = next;
-                refreshDraft();
-            }
-        });
-        document.addEventListener('change', (e) => {
-            if (e.target.matches('#draft-form input[type="text"], select[name="tier"]')) {
-                refreshDraft();
-            }
-        });
-        document.addEventListener('submit', (e) => {
-            if (e.target.id === 'draft-form') {
-                e.preventDefault();
-                refreshDraft();
-            }
-        });
-
-        // ---- Hover tooltip: per-row breakdown of fit-score contributors ----
-        const recTooltip = document.getElementById('rec-tooltip');
-        let recHoverRow = null;
-
-        function positionRecTooltip(row) {
-            const rect = row.getBoundingClientRect();
-            // Reveal hidden first so we can measure.
-            recTooltip.hidden = false;
-            const tip = recTooltip.getBoundingClientRect();
-            const margin = 12;
-            // Default: place to the right of the row.
-            let left = rect.right + margin;
-            if (left + tip.width > window.innerWidth - 8) {
-                // Not enough room on the right; fall back to the left.
-                left = rect.left - tip.width - margin;
-                if (left < 8) left = 8;
-            }
-            // Vertically center on the row, clamped to viewport.
-            let top = rect.top + rect.height / 2 - tip.height / 2;
-            top = Math.max(8, Math.min(top, window.innerHeight - tip.height - 8));
-            recTooltip.style.left = `${left}px`;
-            recTooltip.style.top = `${top}px`;
-        }
-
-        document.addEventListener('mouseover', (e) => {
-            const row = e.target.closest('.rec-row');
-            if (!row || row === recHoverRow) return;
-            const src = row.querySelector('.rec-breakdown-src');
-            if (!src) return;
-            recTooltip.innerHTML = src.innerHTML;
-            recHoverRow = row;
-            positionRecTooltip(row);
-        });
-        document.addEventListener('mouseout', (e) => {
-            if (!recHoverRow) return;
-            // Still inside the same row? Ignore — only hide on real exit.
-            if (e.relatedTarget && recHoverRow.contains(e.relatedTarget)) return;
-            recTooltip.hidden = true;
-            recHoverRow = null;
-        });
-        // The recs list scrolls; hide the (now-stale-positioned) tooltip on scroll.
-        document.addEventListener('scroll', () => {
-            if (!recTooltip.hidden) {
-                recTooltip.hidden = true;
-                recHoverRow = null;
-            }
-        }, true);
-
-        // ---- LCU auto-sync ----
-        const lcuStatus = document.getElementById('lcu-status');
-        const lcuToggle = document.getElementById('lcu-sync');
-
-        function setBadge(text, cls) {
-            lcuStatus.textContent = text;
-            lcuStatus.className = 'lcu-badge ' + cls;
-        }
-
-        // Track what LCU last reported for each slot. The auto-sync only
-        // overwrites a slot when the form value still matches what LCU last
-        // wrote (or is empty). Anything else means the user typed an override
-        // — leave it alone until they clear the field.
-        const lcuApplied = { my: {}, enemy: {}, bans: '', lane: '' };
-
-        function syncSlot(inp, lcuValue, lastApplied) {
-            const overridden = inp.value !== '' && inp.value !== lastApplied;
-            if (overridden || inp.value === lcuValue) return false;
-            inp.value = lcuValue;
-            return true;
-        }
-
-        async function pollLcu() {
-            try {
-                const tierEl = document.querySelector('select[name="tier"]');
-                const tier = tierEl ? tierEl.value : '';
-                const lcuUrl = tier
-                    ? `/api/lcu?tier=${encodeURIComponent(tier)}`
-                    : '/api/lcu';
-                const r = await fetch(lcuUrl, { cache: 'no-store' });
-                const d = await r.json();
-
-                if (!d.connected) {
-                    setBadge('LCU: client not running', 'lcu-off');
-                    return;
-                }
-                if (!d.in_champ_select) {
-                    setBadge('LCU: not in champ select', 'lcu-idle');
-                    return;
-                }
-                setBadge('LCU: in champ select', 'lcu-live');
-
-                if (!lcuToggle.checked) return;
-
-                const form = document.getElementById('draft-form');
-                let dirty = false;
-                const positions = ['TOP', 'JUNGLE', 'MID', 'BOT', 'SUPPORT'];
-
-                for (const [prefix, team, applied] of [
-                    ['my',    d.my_team    || {}, lcuApplied.my],
-                    ['enemy', d.enemy_team || {}, lcuApplied.enemy],
-                ]) {
-                    for (const pos of positions) {
-                        const inp = form.querySelector(`input[name="${prefix}_${pos}"]`);
-                        if (!inp) continue;
-                        const lcuValue = team[pos] || '';
-                        if (syncSlot(inp, lcuValue, applied[pos] || '')) dirty = true;
-                        applied[pos] = lcuValue;
-                    }
-                }
-
-                // Bans: sort to a canonical order so LCU's pick-order list and
-                // the server's sorted output compare equal.
-                const lcuBansSorted = (d.bans || []).slice().sort().join(', ');
-                const bansInp = form.querySelector('input[name="bans"]');
-                if (bansInp) {
-                    if (syncSlot(bansInp, lcuBansSorted, lcuApplied.bans)) dirty = true;
-                    lcuApplied.bans = lcuBansSorted;
-                }
-
-                const activeInp = document.getElementById('active-input');
-                if (activeInp && d.my_lane) {
-                    if (syncSlot(activeInp, d.my_lane, lcuApplied.lane)) dirty = true;
-                    lcuApplied.lane = d.my_lane;
-                }
-
-                if (dirty) refreshDraft();
-            } catch (e) {
-                console.error('LCU poll error', e);
-            }
-        }
-
-        setInterval(pollLcu, 2000);
-        pollLcu();
-    </script>
+    <script src="{{ url_for('static', filename='js/draft.js') }}"></script>
 
     {% endif %}
     </div>

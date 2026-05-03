@@ -1,8 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Champion winrates — LoL Matchups{% endblock %}
 {% block body %}
-    <h1>Champion winrates ({{ lane_label }})</h1>
-
+    <div id="index-content">
     {% if error %}
         <p class="empty">{{ error }}</p>
     {% else %}
@@ -22,10 +21,10 @@
             {% endfor %}
         </div>
 
-        <label>Tier
+        <label class="tier-picker" title="{{ tier_label(tier) }}">
             <select name="tier" id="tier-select">
                 {% for t in available_tiers %}
-                    <option value="{{ t }}" {% if t == tier %}selected{% endif %}>{{ t }}</option>
+                    <option value="{{ t }}" {% if t == tier %}selected{% endif %}>{{ tier_label(t) }}</option>
                 {% endfor %}
             </select>
         </label>
@@ -75,6 +74,7 @@
     {% else %}
     <p class="empty">No champions in this filter combination yet.</p>
     {% endif %}
+    </div>
 
     <style>
         .role-buttons {
@@ -131,32 +131,61 @@
     </style>
 
     <script>
-        // Role button → set hidden lane field + submit.
-        document.querySelectorAll('.role-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.getElementById('lane-input').value = btn.dataset.lane;
-                document.getElementById('filters').submit();
-            });
-        });
-
-        // Tier change → submit immediately.
-        document.getElementById('tier-select').addEventListener('change', () => {
-            document.getElementById('filters').submit();
-        });
-
-        // Click a column header → sort by it. Same column twice flips direction.
+        // AJAX-refresh the page in place instead of submitting the form (which
+        // would full-reload and visibly repaint the nav + filter buttons).
+        // Handlers are delegated on document so they survive the content swap.
         const NATURAL_DESC = new Set(['winrate', 'pickrate', 'banrate', 'games']);
-        const currentSort = "{{ sort_by }}";
-        document.querySelectorAll('th[data-sort]').forEach(th => {
-            th.addEventListener('click', () => {
-                const col = th.dataset.sort;
+        let inflight = null;
+
+        async function refresh() {
+            if (inflight) inflight.abort();
+            const ctrl = new AbortController();
+            inflight = ctrl;
+            const form = document.getElementById('filters');
+            if (!form) return;
+            const params = new URLSearchParams();
+            for (const [k, v] of new FormData(form)) {
+                if (v !== '') params.set(k, v);
+            }
+            const url = '/?' + params.toString();
+            history.replaceState({}, '', url);
+            try {
+                const r = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
+                if (!r.ok) return;
+                const html = await r.text();
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+                const fresh = doc.getElementById('index-content');
+                if (fresh) document.getElementById('index-content').replaceWith(fresh);
+            } catch (e) {
+                if (e.name !== 'AbortError') console.error('index refresh', e);
+            } finally {
+                if (inflight === ctrl) inflight = null;
+            }
+        }
+
+        document.addEventListener('click', (e) => {
+            const roleBtn = e.target.closest('.role-btn');
+            if (roleBtn) {
+                document.getElementById('lane-input').value = roleBtn.dataset.lane;
+                refresh();
+                return;
+            }
+            const sortHeader = e.target.closest('th[data-sort]');
+            if (sortHeader) {
+                const col = sortHeader.dataset.sort;
+                const inp = document.getElementById('sort-input');
+                const current = inp ? inp.value : '';
+                // Always signed; flip sign on toggle, natural default on first click.
                 let next;
-                if (currentSort === col)            next = '-' + col;
-                else if (currentSort === '-' + col) next = col;
-                else                                next = NATURAL_DESC.has(col) ? '-' + col : col;
-                document.getElementById('sort-input').value = next;
-                document.getElementById('filters').submit();
-            });
+                if (current === '+' + col)      next = '-' + col;
+                else if (current === '-' + col) next = '+' + col;
+                else                            next = NATURAL_DESC.has(col) ? '-' + col : '+' + col;
+                if (inp) inp.value = next;
+                refresh();
+            }
+        });
+        document.addEventListener('change', (e) => {
+            if (e.target.id === 'tier-select') refresh();
         });
     </script>
     {% endif %}

@@ -32,6 +32,10 @@ import httpx
 import config
 from version import __version__
 
+log = logging.getLogger(__name__)
+
+VERSION_RE = re.compile(r"^v(\d+\.\d+\.\d+)$")
+
 # Testing knobs. These let you verify the auto-update pipeline end-to-end
 # without re-tagging / re-publishing each time:
 #   LOL_MATCHUPS_VERSION_OVERRIDE=0.0.0   — make the running app *report* this
@@ -42,7 +46,8 @@ from version import __version__
 #                                            entirely. The updater will fetch
 #                                            and apply the current latest even
 #                                            when versions match.
-# Both are read fresh on each check_and_apply() call.
+# Both are read fresh on each check_for_update() call. Stripped from the
+# child env in _spawn_swap so a force-update is one-shot, not a loop.
 _VERSION_OVERRIDE_ENV = "LOL_MATCHUPS_VERSION_OVERRIDE"
 _FORCE_UPDATE_ENV = "LOL_MATCHUPS_FORCE_UPDATE"
 
@@ -53,10 +58,6 @@ def _local_version() -> str:
 
 def _force_update() -> bool:
     return os.environ.get(_FORCE_UPDATE_ENV, "").lower() in ("1", "true", "yes")
-
-log = logging.getLogger(__name__)
-
-VERSION_RE = re.compile(r"^v(\d+\.\d+\.\d+)$")
 
 
 def _is_frozen() -> bool:
