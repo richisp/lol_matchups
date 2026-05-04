@@ -1,6 +1,47 @@
 {% extends "base.html" %}
 {% block title %}Champ select helper — LoL Draft{% endblock %}
 {% block body %}
+
+    {# ---- Reusable tooltip-body macro: shared by recommendation rows and
+           by the per-slot hover on picked champions. ---- #}
+    {% macro breakdown_section(items, key, total, label) %}
+    <div class="bk-section">
+        <div class="bk-section-title">
+            <span>{{ label }}</span>
+            <span class="bk-section-total {% if total > 0 %}good{% elif total < 0 %}bad{% endif %}">{% if total >= 0 %}+{% endif %}{{ "%.2f"|format(total) }}</span>
+        </div>
+        {% if items %}
+        <table class="bk-table">
+            {% for it in items %}
+            <tr>
+                <td class="bk-name">{{ it[key] }}</td>
+                <td class="bk-lane">{{ it.lane }}</td>
+                <td class="bk-wr">{% if it.winrate is not none %}{{ "%.2f"|format(it.winrate) }}%{% else %}—{% endif %}</td>
+                <td class="bk-games">{% if it.games %}{{ "{:,}".format(it.games) }}g{% else %}<span class="bk-faded">no data</span>{% endif %}</td>
+                <td class="bk-contrib {% if it.contrib > 0 %}good{% elif it.contrib < 0 %}bad{% endif %}">{% if it.contrib >= 0 %}+{% endif %}{{ "%.2f"|format(it.contrib) }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+        {% else %}
+        <div class="bk-empty">No picks yet</div>
+        {% endif %}
+    </div>
+    {% endmacro %}
+
+    {% macro pick_tooltip(c, lane) %}
+    <div class="bk-header">
+        <strong>{{ c.champion_name }}</strong>
+        <span class="bk-fit">Fit <span class="winrate {% if c.fit >= 52 %}good{% elif c.fit <= 48 %}bad{% endif %}">{{ "%.2f"|format(c.fit) }}</span></span>
+    </div>
+    <div class="bk-base">Base WR {{ "%.2f"|format(c.base) }} · {{ lane }} · {{ tier }}</div>
+    {{ breakdown_section(c.counter_breakdown, 'opponent', c.counter_total, 'vs Enemies') }}
+    {{ breakdown_section(c.synergy_breakdown, 'ally', c.synergy_total, 'w/ Allies') }}
+    <div class="bk-risk" title="Weighted exposure to popular bad matchups in this lane (lower = safer blind pick)">
+        Blind risk
+        <span class="{% if c.blind_risk < 5 %}good{% elif c.blind_risk > 10 %}bad{% endif %}">{{ "%.2f"|format(c.blind_risk) }}</span>
+    </div>
+    {% endmacro %}
+
     <div class="draft-layout">
     <div class="toolbar">
         <label class="toolbar-field tier-picker" title="{{ tier_label(tier) }}">
@@ -63,6 +104,9 @@
                                    autocomplete="off">
                         </div>
                     </div>
+                    {% if my_pick_breakdowns and my_pick_breakdowns[pos] %}
+                    <div class="rec-breakdown-src" hidden>{{ pick_tooltip(my_pick_breakdowns[pos], pos) }}</div>
+                    {% endif %}
                 </div>
                 {% endfor %}
             </div>
@@ -71,29 +115,6 @@
                 <h2>Recommendations <span class="meta-inline">— {{ active }}</span></h2>
                 <div class="recs-scroll">
                 {% if candidates %}
-                {% macro breakdown_section(items, key, total, label) %}
-                <div class="bk-section">
-                    <div class="bk-section-title">
-                        <span>{{ label }}</span>
-                        <span class="bk-section-total {% if total > 0 %}good{% elif total < 0 %}bad{% endif %}">{% if total >= 0 %}+{% endif %}{{ "%.2f"|format(total) }}</span>
-                    </div>
-                    {% if items %}
-                    <table class="bk-table">
-                        {% for it in items %}
-                        <tr>
-                            <td class="bk-name">{{ it[key] }}</td>
-                            <td class="bk-lane">{{ it.lane }}</td>
-                            <td class="bk-wr">{% if it.winrate is not none %}{{ "%.2f"|format(it.winrate) }}%{% else %}—{% endif %}</td>
-                            <td class="bk-games">{% if it.games %}{{ "{:,}".format(it.games) }}g{% else %}<span class="bk-faded">no data</span>{% endif %}</td>
-                            <td class="bk-contrib {% if it.contrib > 0 %}good{% elif it.contrib < 0 %}bad{% endif %}">{% if it.contrib >= 0 %}+{% endif %}{{ "%.2f"|format(it.contrib) }}</td>
-                        </tr>
-                        {% endfor %}
-                    </table>
-                    {% else %}
-                    <div class="bk-empty">No picks yet</div>
-                    {% endif %}
-                </div>
-                {% endmacro %}
                 <table class="recs-table">
                     <thead>
                         <tr>
@@ -112,19 +133,7 @@
                                 <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champ_id(c.champion_name) }}.png"
                                      alt="" loading="lazy" onerror="this.style.visibility='hidden'">
                                 <button type="button" class="rec-pick" data-name="{{ c.champion_name }}">{{ c.champion_name }}</button>
-                                <div class="rec-breakdown-src" hidden>
-                                    <div class="bk-header">
-                                        <strong>{{ c.champion_name }}</strong>
-                                        <span class="bk-fit">Fit <span class="winrate {% if c.fit >= 52 %}good{% elif c.fit <= 48 %}bad{% endif %}">{{ "%.2f"|format(c.fit) }}</span></span>
-                                    </div>
-                                    <div class="bk-base">Base WR {{ "%.2f"|format(c.base) }} · {{ active }} · {{ tier }}</div>
-                                    {{ breakdown_section(c.counter_breakdown, 'opponent', c.counter_total, 'vs Enemies') }}
-                                    {{ breakdown_section(c.synergy_breakdown, 'ally', c.synergy_total, 'w/ Allies') }}
-                                    <div class="bk-risk" title="Weighted exposure to popular bad matchups in this lane (lower = safer blind pick)">
-                                        Blind risk
-                                        <span class="{% if c.blind_risk < 5 %}good{% elif c.blind_risk > 10 %}bad{% endif %}">{{ "%.2f"|format(c.blind_risk) }}</span>
-                                    </div>
-                                </div>
+                                <div class="rec-breakdown-src" hidden>{{ pick_tooltip(c, active) }}</div>
                             </td>
                             <td class="num winrate {% if c.fit >= 52 %}good{% elif c.fit <= 48 %}bad{% endif %}">
                                 {{ "%.2f"|format(c.fit) }}
@@ -184,6 +193,9 @@
                                    autocomplete="off">
                         </div>
                     </div>
+                    {% if enemy_pick_breakdowns and enemy_pick_breakdowns[pos] %}
+                    <div class="rec-breakdown-src" hidden>{{ pick_tooltip(enemy_pick_breakdowns[pos], pos) }}</div>
+                    {% endif %}
                 </div>
                 {% endfor %}
             </div>
