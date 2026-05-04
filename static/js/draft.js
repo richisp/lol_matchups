@@ -101,7 +101,7 @@ document.addEventListener('click', (e) => {
     }
 });
 document.addEventListener('change', (e) => {
-    if (e.target.matches('#draft-form input[type="text"], select[name="tier"]')) {
+    if (e.target.matches('#draft-form input[type="text"], select[name="tier"], input[name="flat_base"]')) {
         refreshDraft();
     }
 });

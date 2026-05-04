@@ -28,10 +28,19 @@
     </div>
     {% endmacro %}
 
+    {# Compact score readout shown directly on a filled slot — same number
+       as the tooltip's "Score", visible without hovering. #}
+    {% macro slot_score(c) %}
+    <div class="slot-score" title="Score = base + counter contribs + synergy contribs">
+        <div class="slot-score-label">Score</div>
+        <div class="slot-score-value winrate {% if c.fit >= 52 %}good{% elif c.fit <= 48 %}bad{% endif %}">{{ "%.2f"|format(c.fit) }}</div>
+    </div>
+    {% endmacro %}
+
     {% macro pick_tooltip(c, lane) %}
     <div class="bk-header">
         <strong>{{ c.champion_name }}</strong>
-        <span class="bk-fit">Fit <span class="winrate {% if c.fit >= 52 %}good{% elif c.fit <= 48 %}bad{% endif %}">{{ "%.2f"|format(c.fit) }}</span></span>
+        <span class="bk-fit">Score <span class="winrate {% if c.fit >= 52 %}good{% elif c.fit <= 48 %}bad{% endif %}">{{ "%.2f"|format(c.fit) }}</span></span>
     </div>
     <div class="bk-base">Base WR {{ "%.2f"|format(c.base) }} · {{ lane }} · {{ tier }}</div>
     {{ breakdown_section(c.counter_breakdown, 'opponent', c.counter_total, 'vs Enemies') }}
@@ -50,6 +59,11 @@
                     <option value="{{ t }}" {% if t == tier %}selected{% endif %}>{{ tier_label(t) }}</option>
                 {% endfor %}
             </select>
+        </label>
+        <label class="toolbar-toggle toolbar-toggle--inline"
+               title="Use 50.00% as the base for every champion. Strips the meta-strength signal so rankings turn entirely on counter & synergy contributions.">
+            <input type="checkbox" form="draft-form" name="flat_base" value="1" {% if flat_base %}checked{% endif %}>
+            <span>Ignore individual champion winrate</span>
         </label>
         <span id="lcu-status" class="lcu-badge lcu-unknown">LCU: …</span>
         <label class="toolbar-toggle">
@@ -103,6 +117,9 @@
                                    value="{{ my_team[pos] or '' }}"
                                    autocomplete="off">
                         </div>
+                        {% if my_pick_breakdowns and my_pick_breakdowns[pos] %}
+                        {{ slot_score(my_pick_breakdowns[pos]) }}
+                        {% endif %}
                     </div>
                     {% if my_pick_breakdowns and my_pick_breakdowns[pos] %}
                     <div class="rec-breakdown-src" hidden>{{ pick_tooltip(my_pick_breakdowns[pos], pos) }}</div>
@@ -119,7 +136,7 @@
                     <thead>
                         <tr>
                             <th data-sort="name"    class="th-sort {% if sort_key == 'name'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Champion</th>
-                            <th data-sort="fit"     class="th-sort num {% if sort_key == 'fit'     %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Fit</th>
+                            <th data-sort="fit"     class="th-sort num {% if sort_key == 'fit'     %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Score</th>
                             <th data-sort="base"    class="th-sort num {% if sort_key == 'base'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Champion's overall winrate in this lane × tier">Base</th>
                             <th data-sort="counter" class="th-sort num {% if sort_key == 'counter' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Sum of weighted counter-matchup deltas vs picked enemies">vs</th>
                             <th data-sort="synergy" class="th-sort num {% if sort_key == 'synergy' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Sum of weighted synergy deltas with picked teammates">w/</th>
@@ -192,6 +209,9 @@
                                    value="{{ enemy_team[pos] or '' }}"
                                    autocomplete="off">
                         </div>
+                        {% if enemy_pick_breakdowns and enemy_pick_breakdowns[pos] %}
+                        {{ slot_score(enemy_pick_breakdowns[pos]) }}
+                        {% endif %}
                     </div>
                     {% if enemy_pick_breakdowns and enemy_pick_breakdowns[pos] %}
                     <div class="rec-breakdown-src" hidden>{{ pick_tooltip(enemy_pick_breakdowns[pos], pos) }}</div>

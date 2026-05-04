@@ -10,7 +10,8 @@
       "Bash(.venv/Scripts/python -c \"from launcher import main; print\\('launcher imports OK'\\)\")",
       "Bash(.venv/Scripts/pyinstaller --clean --noconfirm lol_matchups.spec)",
       "Bash(.venv/Scripts/python -c \"from launcher import main; print\\('OK'\\)\")",
-      "Bash(.venv/Scripts/python -c \"from launcher import URL; print\\(URL\\)\")"
+      "Bash(.venv/Scripts/python -c \"from launcher import URL; print\\(URL\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(r'c:\\\\Users\\\\ITWORK\\\\lol_matchups\\\\app.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
     ]
   }
 }
