@@ -57,7 +57,7 @@ DEFAULT_SORT = "winrate"  # canonical default; rendered as "winrate" (descending
 DRAFT_SORT_KEYS: dict[str, tuple[str, bool]] = {
     "name":    ("champion_name", False),
     "fit":     ("fit", True),
-    "base":    ("base", True),
+    "winrate": ("winrate", True),
     "counter": ("counter_total", True),
     "synergy": ("synergy_total", True),
     "risk":    ("blind_risk", False),
@@ -361,15 +361,14 @@ def compute_draft_scores(
     my_team: dict[str, str],
     enemy_team: dict[str, str],
     bans: set[str],
-    flat_base: bool = False,
 ) -> list[dict]:
     """Return all candidates for `lane × tier` with fit scores.
 
-    fit = base_winrate + Σ counter_contrib + Σ synergy_contrib
+    fit = 50.0 + Σ counter_contrib + Σ synergy_contrib
 
-    With `flat_base`, every candidate gets base = 50.0 instead of its tier
-    winrate. Strips the meta-strength signal so rankings turn entirely on
-    counter/synergy contributions.
+    Base is always 50.0 — we deliberately ignore each champion's individual
+    tier winrate so rankings turn purely on counter/synergy contributions
+    instead of meta strength.
     """
     counter_w = config.COUNTER_WEIGHTS.get(lane, {})
     synergy_w = config.SYNERGY_WEIGHTS.get(lane, {})
@@ -437,7 +436,7 @@ def compute_draft_scores(
     out = []
     for c in candidates:
         name = c["champion_name"]
-        base = 50.0 if flat_base else (c["winrate"] or 50.0)
+        base = 50.0
 
         counter_contribs = []
         counter_breakdown = []
@@ -506,7 +505,6 @@ def compute_pick_breakdown(
     tier: str,
     opposing_team: dict[str, str],
     allies_team: dict[str, str],
-    flat_base: bool = False,
 ) -> dict:
     """Per-pick breakdown for the hover tooltip on a slot. Same shape as the
     candidate dicts compute_draft_scores produces, so the template's
@@ -515,12 +513,13 @@ def compute_pick_breakdown(
     counter_w = config.COUNTER_WEIGHTS.get(lane, {})
     synergy_w = config.SYNERGY_WEIGHTS.get(lane, {})
 
-    base_row = conn.execute(
+    base = 50.0
+    stats_row = conn.execute(
         "SELECT winrate FROM champion_stats "
         "WHERE champion_name=? AND lane=? AND tier=?",
         (champ, lane, tier),
     ).fetchone()
-    base = 50.0 if flat_base else ((base_row["winrate"] if base_row else None) or 50.0)
+    winrate = stats_row["winrate"] if stats_row else None
 
     def _matchup(opponent: str, opp_lane: str, kind: str) -> dict | None:
         return conn.execute(
@@ -584,6 +583,7 @@ def compute_pick_breakdown(
         "champion_name": champ,
         "lane": lane,
         "base": base,
+        "winrate": winrate,
         "counter_total": counter_total,
         "synergy_total": synergy_total,
         "fit": base + counter_total + synergy_total,
@@ -632,8 +632,6 @@ def draft():
     my_bans_list = [b.strip() for b in (request.args.get("my_bans") or "").split(",") if b.strip()]
     enemy_bans_list = [b.strip() for b in (request.args.get("enemy_bans") or "").split(",") if b.strip()]
 
-    flat_base = bool(request.args.get("flat_base"))
-
     # Strip the active slot from my_team for scoring (it's the one we're filling).
     my_team_for_scoring = {k: v for k, v in my_team.items() if k != active}
 
@@ -641,7 +639,6 @@ def draft():
         candidates = compute_draft_scores(
             conn, active, tier,
             my_team_for_scoring, enemy_team, bans,
-            flat_base=flat_base,
         )
         # All champion display names (for the autocomplete datalist).
         champ_names = sorted({
@@ -658,7 +655,6 @@ def draft():
                 conn, name, pos, tier,
                 opposing_team=enemy_team,
                 allies_team=my_team,
-                flat_base=flat_base,
             )
             for pos, name in my_team.items()
         }
@@ -667,7 +663,6 @@ def draft():
                 conn, name, pos, tier,
                 opposing_team=my_team,
                 allies_team=enemy_team,
-                flat_base=flat_base,
             )
             for pos, name in enemy_team.items()
         }
@@ -708,7 +703,6 @@ def draft():
         sort_by=sort_by,
         sort_key=sort_key,
         sort_desc=sort_desc,
-        flat_base=flat_base,
     )
 
 

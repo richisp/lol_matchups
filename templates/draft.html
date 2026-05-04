@@ -42,7 +42,7 @@
         <strong>{{ c.champion_name }}</strong>
         <span class="bk-fit">Score <span class="winrate {% if c.fit >= 52 %}good{% elif c.fit <= 48 %}bad{% endif %}">{{ "%.2f"|format(c.fit) }}</span></span>
     </div>
-    <div class="bk-base">Base WR {{ "%.2f"|format(c.base) }} · {{ lane }} · {{ tier }}</div>
+    <div class="bk-base">WR {% if c.winrate is not none %}{{ "%.2f"|format(c.winrate) }}{% else %}—{% endif %} · {{ lane }} · {{ tier }}</div>
     {{ breakdown_section(c.counter_breakdown, 'opponent', c.counter_total, 'vs Enemies') }}
     {{ breakdown_section(c.synergy_breakdown, 'ally', c.synergy_total, 'w/ Allies') }}
     <div class="bk-risk" title="Weighted exposure to popular bad matchups in this lane (lower = safer blind pick)">
@@ -59,11 +59,6 @@
                     <option value="{{ t }}" {% if t == tier %}selected{% endif %}>{{ tier_label(t) }}</option>
                 {% endfor %}
             </select>
-        </label>
-        <label class="toolbar-toggle toolbar-toggle--inline"
-               title="Use 50.00% as the base for every champion. Strips the meta-strength signal so rankings turn entirely on counter & synergy contributions.">
-            <input type="checkbox" form="draft-form" name="flat_base" value="1" {% if flat_base %}checked{% endif %}>
-            <span>Ignore individual champion winrate</span>
         </label>
         <span id="lcu-status" class="lcu-badge lcu-unknown">LCU: …</span>
         <label class="toolbar-toggle">
@@ -137,7 +132,7 @@
                         <tr>
                             <th data-sort="name"    class="th-sort {% if sort_key == 'name'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Champion</th>
                             <th data-sort="fit"     class="th-sort num {% if sort_key == 'fit'     %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Score</th>
-                            <th data-sort="base"    class="th-sort num {% if sort_key == 'base'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Champion's overall winrate in this lane × tier">Base</th>
+                            <th data-sort="winrate" class="th-sort num {% if sort_key == 'winrate' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Champion's overall winrate in this lane × tier">WR</th>
                             <th data-sort="counter" class="th-sort num {% if sort_key == 'counter' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Sum of weighted counter-matchup deltas vs picked enemies">vs</th>
                             <th data-sort="synergy" class="th-sort num {% if sort_key == 'synergy' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Sum of weighted synergy deltas with picked teammates">w/</th>
                             <th data-sort="risk"    class="th-sort num {% if sort_key == 'risk'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Weighted exposure to popular bad matchups in this lane × tier (lower = safer blind pick)">Risk</th>
@@ -155,8 +150,8 @@
                             <td class="num winrate {% if c.fit >= 52 %}good{% elif c.fit <= 48 %}bad{% endif %}">
                                 {{ "%.2f"|format(c.fit) }}
                             </td>
-                            <td class="num winrate {% if c.base >= 52 %}good{% elif c.base <= 48 %}bad{% endif %}">
-                                {{ "%.2f"|format(c.base) }}
+                            <td class="num winrate {% if c.winrate is not none and c.winrate >= 52 %}good{% elif c.winrate is not none and c.winrate <= 48 %}bad{% endif %}">
+                                {% if c.winrate is not none %}{{ "%.2f"|format(c.winrate) }}{% else %}—{% endif %}
                             </td>
                             <td class="num {% if c.counter_total > 1 %}good{% elif c.counter_total < -1 %}bad{% endif %}">
                                 {% if c.counter_total >= 0 %}+{% endif %}{{ "%.2f"|format(c.counter_total) }}

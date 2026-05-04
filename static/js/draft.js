@@ -63,7 +63,7 @@ async function refreshDraft() {
 }
 
 // Event delegation: handlers stay live after refreshDraft swaps the form.
-const RECS_NATURAL_DESC = new Set(['fit', 'base', 'counter', 'synergy']);
+const RECS_NATURAL_DESC = new Set(['fit', 'winrate', 'counter', 'synergy']);
 
 document.addEventListener('click', (e) => {
     const slotPick = e.target.closest('.slot-pick');
@@ -101,7 +101,7 @@ document.addEventListener('click', (e) => {
     }
 });
 document.addEventListener('change', (e) => {
-    if (e.target.matches('#draft-form input[type="text"], select[name="tier"], input[name="flat_base"]')) {
+    if (e.target.matches('#draft-form input[type="text"], select[name="tier"]')) {
         refreshDraft();
     }
 });

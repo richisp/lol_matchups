@@ -44,7 +44,6 @@
     font-size: 0.88rem;
 }
 .toolbar-toggle { margin-left: auto; cursor: pointer; }
-.toolbar-toggle.toolbar-toggle--inline { margin-left: 0; }
 .toolbar-toggle input[type="checkbox"] { margin: 0; }
 
 .draft-board {
