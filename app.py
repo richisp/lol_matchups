@@ -494,6 +494,99 @@ def compute_draft_scores(
     return out
 
 
+def compute_pick_breakdown(
+    conn,
+    champ: str,
+    lane: str,
+    tier: str,
+    opposing_team: dict[str, str],
+    allies_team: dict[str, str],
+) -> dict:
+    """Per-pick breakdown for the hover tooltip on a slot. Same shape as the
+    candidate dicts compute_draft_scores produces, so the template's
+    breakdown_section macro renders both identically.
+    """
+    counter_w = config.COUNTER_WEIGHTS.get(lane, {})
+    synergy_w = config.SYNERGY_WEIGHTS.get(lane, {})
+
+    base_row = conn.execute(
+        "SELECT winrate FROM champion_stats "
+        "WHERE champion_name=? AND lane=? AND tier=?",
+        (champ, lane, tier),
+    ).fetchone()
+    base = (base_row["winrate"] if base_row else None) or 50.0
+
+    def _matchup(opponent: str, opp_lane: str, kind: str) -> dict | None:
+        return conn.execute(
+            "SELECT winrate, games FROM matchups "
+            "WHERE champion_name=? AND champion_lane=? "
+            "AND opponent_name=? AND opponent_lane=? "
+            "AND matchup_type=? AND tier=?",
+            (champ, lane, opponent, opp_lane, kind, tier),
+        ).fetchone()
+
+    counter_total = 0.0
+    counter_breakdown = []
+    for opp_lane, opp_name in opposing_team.items():
+        mu = _matchup(opp_name, opp_lane, "counter")
+        weight = counter_w.get(opp_lane, 0) / 100.0
+        wr = mu["winrate"] if mu else None
+        games = mu["games"] if mu else None
+        if wr is not None and (games or 0) >= 30:
+            contrib = (wr - 50.0) * weight
+            counter_total += contrib
+            counter_breakdown.append({
+                "opponent": opp_name, "lane": opp_lane,
+                "winrate": wr, "games": games,
+                "weight": weight, "contrib": contrib,
+            })
+        else:
+            counter_breakdown.append({
+                "opponent": opp_name, "lane": opp_lane,
+                "winrate": None, "games": games,
+                "weight": weight, "contrib": 0.0,
+            })
+
+    synergy_total = 0.0
+    synergy_breakdown = []
+    for ally_lane, ally_name in allies_team.items():
+        if ally_lane == lane:
+            continue  # the champ itself
+        mu = _matchup(ally_name, ally_lane, "synergy")
+        weight = synergy_w.get(ally_lane, 0) / 100.0
+        wr = mu["winrate"] if mu else None
+        games = mu["games"] if mu else None
+        if wr is not None and (games or 0) >= 30:
+            contrib = (wr - 50.0) * weight
+            synergy_total += contrib
+            synergy_breakdown.append({
+                "ally": ally_name, "lane": ally_lane,
+                "winrate": wr, "games": games,
+                "weight": weight, "contrib": contrib,
+            })
+        else:
+            synergy_breakdown.append({
+                "ally": ally_name, "lane": ally_lane,
+                "winrate": None, "games": games,
+                "weight": weight, "contrib": 0.0,
+            })
+
+    risk_map = compute_blind_risk(
+        conn, lane, tier, known_enemy_lanes=set(opposing_team.keys()),
+    )
+    return {
+        "champion_name": champ,
+        "lane": lane,
+        "base": base,
+        "counter_total": counter_total,
+        "synergy_total": synergy_total,
+        "fit": base + counter_total + synergy_total,
+        "blind_risk": risk_map.get(champ, 0.0),
+        "counter_breakdown": counter_breakdown,
+        "synergy_breakdown": synergy_breakdown,
+    }
+
+
 @app.route("/api/lcu")
 def api_lcu():
     """Snapshot of current champ select state from the local LoL client.
@@ -547,6 +640,26 @@ def draft():
                 "SELECT DISTINCT champion_name FROM champion_stats"
             )
         })
+        # Hover-tooltip breakdowns for already-picked champions, keyed by
+        # the slot's position. Mirrors what compute_draft_scores does for
+        # rec candidates, so the template can render both with the same
+        # macro.
+        my_pick_breakdowns = {
+            pos: compute_pick_breakdown(
+                conn, name, pos, tier,
+                opposing_team=enemy_team,
+                allies_team=my_team,
+            )
+            for pos, name in my_team.items()
+        }
+        enemy_pick_breakdowns = {
+            pos: compute_pick_breakdown(
+                conn, name, pos, tier,
+                opposing_team=my_team,
+                allies_team=enemy_team,
+            )
+            for pos, name in enemy_team.items()
+        }
 
     raw_sort = request.args.get("sort") or DRAFT_DEFAULT_SORT
     sort_key, sort_col, sort_desc = parse_sort(
@@ -570,6 +683,8 @@ def draft():
         available_tiers=available_tiers,
         my_team=my_team,
         enemy_team=enemy_team,
+        my_pick_breakdowns=my_pick_breakdowns,
+        enemy_pick_breakdowns=enemy_pick_breakdowns,
         bans_str=",".join(sorted(bans)),
         my_bans=my_bans_list,
         enemy_bans=enemy_bans_list,

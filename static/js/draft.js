@@ -137,10 +137,12 @@ function positionRecTooltip(row) {
 }
 
 document.addEventListener('mouseover', (e) => {
-    const row = e.target.closest('.rec-row');
+    // Either a recommendation row OR an already-picked-champion slot —
+    // both stash a `.rec-breakdown-src` div with the rendered tooltip body.
+    const row = e.target.closest('.rec-row, .slot');
     if (!row || row === recHoverRow) return;
     const src = row.querySelector('.rec-breakdown-src');
-    if (!src) return;
+    if (!src || !src.innerHTML.trim()) return;
     recTooltip.innerHTML = src.innerHTML;
     recHoverRow = row;
     positionRecTooltip(row);

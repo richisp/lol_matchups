@@ -232,40 +232,50 @@ def normalize_session(
                         break
         break
 
-    # Bans appear in two places in the session payload:
-    #   session["bans"]["myTeamBans"]/["theirTeamBans"]: lists of championIds
-    #     (≤0 = empty slot). This is the most reliable source for *locked*
-    #     bans split by team — useful for the per-team visual.
-    #   session["actions"]: nested action groups including in-flight hovers;
-    #     "completed" filters down to locked bans, but doesn't tell us which
-    #     team. We fall back here only when the structured field is empty.
-    def _resolve(cids: list[int]) -> list[str]:
-        out: list[str] = []
-        for cid in cids or []:
-            if cid and cid > 0:
+    # Bans: scan the `actions` array for completed bans, categorize by the
+    # banning player's cellId (cells 0-4 = blue side, 5-9 = red side; the
+    # local player's cellId tells us which side is "ours"). The structured
+    # `session["bans"]` field is only used as a fallback when actions don't
+    # carry an actorCellId — in some queue states the structured field is
+    # empty in early phases while actions already have completed entries.
+    my_side_is_blue = 0 <= local_cell < 5
+    my_bans: list[str] = []
+    enemy_bans: list[str] = []
+    seen_cids: set[int] = set()
+
+    for action_group in session.get("actions") or []:
+        for action in action_group:
+            if action.get("type") != "ban" or not action.get("completed"):
+                continue
+            cid = action.get("championId") or 0
+            if cid <= 0 or cid in seen_cids:
+                continue
+            seen_cids.add(cid)
+            name = champion_name_by_key(cid, dd_version)
+            if not name:
+                continue
+            actor_cell = action.get("actorCellId", -1)
+            actor_is_blue = 0 <= actor_cell < 5
+            if actor_is_blue == my_side_is_blue:
+                my_bans.append(name)
+            else:
+                enemy_bans.append(name)
+
+    # Fallback: structured field. championIds ≤0 are empty slots.
+    if not my_bans and not enemy_bans:
+        ban_data = session.get("bans") or {}
+        for cid in ban_data.get("myTeamBans") or []:
+            if cid > 0:
                 name = champion_name_by_key(cid, dd_version)
-                if name:
-                    out.append(name)
-        return out
+                if name and name not in my_bans:
+                    my_bans.append(name)
+        for cid in ban_data.get("theirTeamBans") or []:
+            if cid > 0:
+                name = champion_name_by_key(cid, dd_version)
+                if name and name not in enemy_bans:
+                    enemy_bans.append(name)
 
-    ban_data = session.get("bans") or {}
-    my_bans = _resolve(ban_data.get("myTeamBans") or [])
-    enemy_bans = _resolve(ban_data.get("theirTeamBans") or [])
     bans: list[str] = list(my_bans) + list(enemy_bans)
-
-    if not bans:
-        # Fallback: scan the actions array for any completed bans we missed.
-        seen: set[int] = set()
-        for action_group in session.get("actions") or []:
-            for action in action_group:
-                if action.get("type") != "ban" or not action.get("completed"):
-                    continue
-                cid = action.get("championId") or 0
-                if cid > 0 and cid not in seen:
-                    seen.add(cid)
-                    name = champion_name_by_key(cid, dd_version)
-                    if name:
-                        bans.append(name)
 
     return {
         "connected": True,
