@@ -349,11 +349,6 @@ def parse_team(prefix: str) -> dict[str, str]:
     return out
 
 
-def parse_bans() -> set[str]:
-    raw = (request.args.get("bans") or "").strip()
-    return {b.strip() for b in raw.split(",") if b.strip()}
-
-
 def compute_draft_scores(
     conn,
     lane: str,
@@ -626,11 +621,11 @@ def draft():
 
     my_team = parse_team("my")
     enemy_team = parse_team("enemy")
-    bans = parse_bans()
-    # LCU-detected bans split by team — used only for the visual icon row
-    # under each team. The combined `bans` field still drives scoring.
+    # LCU-detected bans split by team — drives the visual icon row under each
+    # team; their union also drives scoring (excluded from candidates).
     my_bans_list = [b.strip() for b in (request.args.get("my_bans") or "").split(",") if b.strip()]
     enemy_bans_list = [b.strip() for b in (request.args.get("enemy_bans") or "").split(",") if b.strip()]
+    bans = set(my_bans_list) | set(enemy_bans_list)
 
     # Strip the active slot from my_team for scoring (it's the one we're filling).
     my_team_for_scoring = {k: v for k, v in my_team.items() if k != active}
@@ -691,7 +686,6 @@ def draft():
         enemy_team=enemy_team,
         my_pick_breakdowns=my_pick_breakdowns,
         enemy_pick_breakdowns=enemy_pick_breakdowns,
-        bans_str=",".join(sorted(bans)),
         my_bans=my_bans_list,
         enemy_bans=enemy_bans_list,
         my_bans_str=",".join(my_bans_list),

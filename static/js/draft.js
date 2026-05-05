@@ -181,7 +181,6 @@ function setBadge(text, cls) {
 const lcuApplied = {
     my: {},
     enemy: {},
-    bans: '',
     lane: (document.getElementById('active-input') || {}).value || '',
 };
 
@@ -231,16 +230,8 @@ async function pollLcu() {
             }
         }
 
-        // Bans: sort to a canonical order so LCU's pick-order list and
-        // the server's sorted output compare equal.
-        const lcuBansSorted = (d.bans || []).slice().sort().join(', ');
-        const bansInp = form.querySelector('input[name="bans"]');
-        if (bansInp) {
-            if (syncSlot(bansInp, lcuBansSorted, lcuApplied.bans)) dirty = true;
-            lcuApplied.bans = lcuBansSorted;
-        }
-        // Per-team bans (visual-only). Server uses the combined `bans`
-        // for scoring; these only drive the icon rows under each team.
+        // Per-team bans drive both the visual icon rows and scoring (the
+        // server unions them to exclude banned champs from candidates).
         for (const [side, listKey] of [['my', 'my_bans'], ['enemy', 'enemy_bans']]) {
             const inp = form.querySelector(`input[name="${listKey}"]`);
             if (!inp) continue;
