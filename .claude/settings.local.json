@@ -11,7 +11,9 @@
       "Bash(.venv/Scripts/pyinstaller --clean --noconfirm lol_matchups.spec)",
       "Bash(.venv/Scripts/python -c \"from launcher import main; print\\('OK'\\)\")",
       "Bash(.venv/Scripts/python -c \"from launcher import URL; print\\(URL\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\(r'c:\\\\Users\\\\ITWORK\\\\lol_matchups\\\\app.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\(r'c:\\\\Users\\\\ITWORK\\\\lol_matchups\\\\app.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(ls -la \"/c/Users/ITWORK/.claude/projects/c--Users-ITWORK-lol-matchups/memory/\" 2>&1)",
+      "Read(//c/Users/ITWORK/.claude/projects/c--Users-ITWORK-lol-matchups/memory//**)"
     ]
   }
 }
