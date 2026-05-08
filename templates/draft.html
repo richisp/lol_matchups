@@ -139,7 +139,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% for c in candidates[:30] %}
+                        {% for c in candidates %}
                         <tr class="rec-row">
                             <td class="champ">
                                 <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champ_id(c.champion_name) }}.png"
@@ -166,7 +166,7 @@
                         {% endfor %}
                     </tbody>
                 </table>
-                <p class="meta">{{ candidates|length }} candidates · showing top 30</p>
+                <p class="meta">{{ candidates|length }} candidates</p>
                 {% else %}
                 <p class="empty">No candidates yet — fill in your lane and check tier.</p>
                 {% endif %}
