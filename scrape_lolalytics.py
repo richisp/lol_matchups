@@ -11,19 +11,57 @@ Tier options: all, challenger, grandmaster, master, master_plus,
 Saves raw row text per position, per tab, to lolalytics_<champion>_<lane>.txt.
 """
 
+import json
 import os
 import sys
+import urllib.request
 from pathlib import Path
 
 from playwright.sync_api import Page, sync_playwright
 
 import config
+from db import _parse_pct
 
 HEADLESS = os.environ.get("HEADLESS", "0") == "1"
 
 DEFAULT_CHAMPION = "swain"
 DEFAULT_LANE = "bottom"
 DEFAULT_TIER = config.DEFAULT_TIER
+
+# Riot's Data Dragon champion `id` → lolalytics URL slug. Most ids lowercase
+# cleanly into the slug (KSante → ksante, Chogath → chogath); a handful
+# don't and need an explicit override.
+LOLALYTICS_SLUG_OVERRIDES: dict[str, str] = {
+    "MonkeyKing": "wukong",
+}
+
+
+def _ddragon_latest_version() -> str:
+    with urllib.request.urlopen(
+        "https://ddragon.leagueoflegends.com/api/versions.json", timeout=15
+    ) as r:
+        return json.loads(r.read().decode())[0]
+
+
+def fetch_champion_list() -> list[dict]:
+    """Pull every champion's display name + lolalytics URL slug from Riot's
+    Data Dragon. The crawler iterates this list × every lane instead of
+    parsing lolalytics' tier list, so a layout regression there can no
+    longer drop legitimate champions (Renekton was missing in the 2026-05-03
+    crawl for exactly that reason).
+
+    Returns: [{"name": "Renekton", "slug": "renekton"}, ...]
+    """
+    version = _ddragon_latest_version()
+    url = f"https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/champion.json"
+    with urllib.request.urlopen(url, timeout=30) as r:
+        payload = json.loads(r.read().decode())
+    out = [
+        {"name": e["name"], "slug": LOLALYTICS_SLUG_OVERRIDES.get(e["id"], e["id"].lower())}
+        for e in payload["data"].values()
+    ]
+    out.sort(key=lambda x: x["name"])
+    return out
 
 
 EXTRACT_OVERALL_JS = r"""
@@ -279,69 +317,21 @@ def format_section(rows: list, header: str) -> str:
     return "\n".join(out)
 
 
-def fetch_lane_pool(lane: str, tier: str = DEFAULT_TIER, min_pickrate: float = 1.0) -> list[dict]:
-    """Visit lolalytics' tier list page for a lane × tier and return the
-    list of champions whose pick rate exceeds `min_pickrate` (in percent).
-    Each entry: {slug, name, pickrate}.
+def scrape_champion_on_page(
+    page: Page,
+    champion: str,
+    lane: str,
+    tier: str = DEFAULT_TIER,
+    *,
+    min_pickrate_for_matchups: float = 0.0,
+) -> dict:
+    """Same contract as scrape_champion, but reuses an existing page.
 
-    `slug` is lolalytics' URL slug (e.g. 'kSante' style lowercased) — feed
-    straight into scrape_champion(). `name` is the display name (e.g. "K'Sante")
-    used as the canonical champion identifier in our DB.
-    """
-    url = f"https://lolalytics.com/lol/tierlist/?lane={lane}&tier={tier}"
-    print(f"fetching pool: {url}")
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=HEADLESS)
-        try:
-            ctx = browser.new_context(viewport={"width": 2400, "height": 1100})
-            page = ctx.new_page()
-            page.goto(url, timeout=60000)
-            try:
-                page.wait_for_load_state("networkidle", timeout=15000)
-            except Exception:
-                pass
-            dismiss_consent(page)
-            # Scroll the whole page so every row renders.
-            for _ in range(20):
-                page.mouse.wheel(0, 900)
-                page.wait_for_timeout(120)
-            page.evaluate("window.scrollTo(0, 0)")
-            page.wait_for_timeout(500)
-
-            entries = page.evaluate(r"""() => {
-                const rows = [...document.querySelectorAll('div')]
-                    .filter(d => /h-\[52px\]/.test(d.className || ''));
-                const out = [];
-                for (const row of rows) {
-                    const link = row.querySelector('a[href*="/build/"]');
-                    if (!link) continue;
-                    const m = (link.getAttribute('href') || '').match(/\/lol\/([a-z0-9]+)\/build/i);
-                    if (!m) continue;
-                    const slug = m[1];
-                    const img = row.querySelector('img[alt]');
-                    const name = img ? (img.alt || '').trim() : '';
-                    // Column index 6 is pick rate (verified empirically).
-                    const prText = (row.children[6]?.textContent || '').trim();
-                    const pr = parseFloat(prText.replace(',', '')) || 0;
-                    if (slug && name) out.push({ slug, name, pickrate: pr });
-                }
-                return out;
-            }""")
-        finally:
-            browser.close()
-
-    return [e for e in entries if e["pickrate"] > min_pickrate]
-
-
-def scrape_champion(champion: str, lane: str, tier: str = DEFAULT_TIER) -> dict:
-    """Open lolalytics for a champion + lane + tier and return:
-        {
-          'champion': str, 'lane': str, 'tier': str,
-          'url': str,
-          'overall': { winrate, pickrate, banrate, games, tier_badge },
-          'strong_against': [ { position, champs: [{name, stats}] }, ... ],
-          'good_synergy':   [ { position, champs: [{name, stats}] }, ... ],
-        }
+    If `min_pickrate_for_matchups > 0` and the focal champion's overall pick
+    rate in this lane is below it, returns immediately after the overall
+    stats — the (slow) `lazy_scroll_page` + tab clicks + carousel scrolling
+    are skipped. The result will have `_skipped_low_pr=True` so the caller
+    can distinguish "intentional skip" from "page broke before tabs".
     """
     url = f"https://lolalytics.com/lol/{champion}/build/?lane={lane}&tier={tier}"
     print(f"loading: {url}")
@@ -354,32 +344,56 @@ def scrape_champion(champion: str, lane: str, tier: str = DEFAULT_TIER) -> dict:
         "strong_against": [],
         "good_synergy": [],
     }
+    page.goto(url, timeout=60000)
+    try:
+        page.wait_for_load_state("networkidle", timeout=15000)
+    except Exception:
+        pass
+    dismiss_consent(page)
+
+    result["overall"] = extract_overall_stats(page)
+    print(f"  overall: {result['overall']}")
+
+    if min_pickrate_for_matchups > 0:
+        pr = _parse_pct(result["overall"].get("pickrate"))
+        if pr is not None and pr < min_pickrate_for_matchups:
+            print(f"  skip matchups: pr={pr}% < {min_pickrate_for_matchups}%")
+            result["_skipped_low_pr"] = True
+            return result
+
+    lazy_scroll_page(page)
+
+    for key, data_type in [("strong_against", "strong_counter"), ("good_synergy", "good_synergy")]:
+        if not click_tab(page, data_type):
+            continue
+        rows = collect_all_rows(page)
+        sizes = ', '.join(f"{r['position']}={len(r['champs'])}" for r in rows)
+        print(f"  {key}: {len(rows)} rows [{sizes}]")
+        result[key] = rows
+    return result
+
+
+def scrape_champion(champion: str, lane: str, tier: str = DEFAULT_TIER) -> dict:
+    """Open lolalytics for a champion + lane + tier and return:
+        {
+          'champion': str, 'lane': str, 'tier': str,
+          'url': str,
+          'overall': { winrate, pickrate, banrate, games, tier_badge },
+          'strong_against': [ { position, champs: [{name, stats}] }, ... ],
+          'good_synergy':   [ { position, champs: [{name, stats}] }, ... ],
+        }
+
+    Standalone wrapper that owns its own browser. The crawler uses
+    scrape_champion_on_page directly to share one browser across many calls.
+    """
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=HEADLESS)
         try:
             ctx = browser.new_context(viewport={"width": 2400, "height": 1100})
             page = ctx.new_page()
-            page.goto(url, timeout=60000)
-            try:
-                page.wait_for_load_state("networkidle", timeout=15000)
-            except Exception:
-                pass
-            dismiss_consent(page)
-            lazy_scroll_page(page)
-
-            result["overall"] = extract_overall_stats(page)
-            print(f"  overall: {result['overall']}")
-
-            for key, data_type in [("strong_against", "strong_counter"), ("good_synergy", "good_synergy")]:
-                if not click_tab(page, data_type):
-                    continue
-                rows = collect_all_rows(page)
-                sizes = ', '.join(f"{r['position']}={len(r['champs'])}" for r in rows)
-                print(f"  {key}: {len(rows)} rows [{sizes}]")
-                result[key] = rows
+            return scrape_champion_on_page(page, champion, lane, tier)
         finally:
             browser.close()
-    return result
 
 
 def main() -> None:

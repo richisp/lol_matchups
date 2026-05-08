@@ -2,11 +2,11 @@ name: Crawl lolalytics
 
 on:
   schedule:
-    # Every other day at 04:00 UTC. A full crawl is ~2h on the free Linux
-    # runner; daily would push us over the 2000 min/month free tier on a
-    # private repo, so we run on odd days of the month (1, 3, 5, ...).
-    # GitHub may delay scheduled runs by a few minutes during high load.
-    - cron: '0 4 */2 * *'
+    # Daily at 04:00 UTC. Lanes run in parallel and reuse browsers, so a full
+    # crawl is ~30–45min — well under the 2000 min/month free-tier ceiling
+    # even on a private repo. GitHub may delay scheduled runs by a few
+    # minutes during high load.
+    - cron: '0 4 * * *'
   workflow_dispatch:
     inputs:
       mode:
@@ -28,7 +28,7 @@ concurrency:
 jobs:
   crawl:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 75
 
     steps:
       - uses: actions/checkout@v4
