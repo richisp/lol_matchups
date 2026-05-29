@@ -41,17 +41,26 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .
-          pip install playwright
+
+      - name: Resolve Playwright version
+        id: pw-version
+        run: |
+          # The browser binary build is pinned to the installed playwright
+          # package version, NOT to pyproject.toml (which only floats
+          # `playwright>=1.45`). Key the cache off the actual installed version
+          # so a Playwright upgrade invalidates the browser cache — otherwise a
+          # stale cache "hits", the download step is skipped, and the new
+          # chrome-headless-shell binary is never fetched.
+          VERSION=$(python -c "import importlib.metadata as m; print(m.version('playwright'))")
+          echo "Installed playwright: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Cache Playwright browser binaries
         id: pw-cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          # Bump the suffix to invalidate. Playwright's chromium is pinned by
-          # the installed playwright package version; keying off the lock makes
-          # the cache self-invalidate on upgrade.
-          key: pw-chromium-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          key: pw-chromium-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
 
       - name: Install Chromium (full)
         if: steps.pw-cache.outputs.cache-hit != 'true'
