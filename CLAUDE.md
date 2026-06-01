@@ -80,7 +80,7 @@ fit = 50.0
 
 - Base is **always 50** — individual champion winrate is deliberately excluded so rankings turn on counter/synergy contributions, not meta strength.
 - Matchups with `games < 30` are treated as no-data (contrib 0).
-- `compute_blind_risk()`: weighted sum of `pickrate` of bad-matchup opponents (counter winrate < `BLIND_PICK_BAD_WR_THRESHOLD = 48.0`), excluding lanes already filled by the enemy. Lower = safer blind pick.
+- `compute_blind_risk()`: popularity-weighted exposure to bad matchups (winrate < `BLIND_PICK_BAD_WR_THRESHOLD = 48.0`), summed over two sources — **counter** exposure across enemy lanes (weighted by `COUNTER_WEIGHTS`, excluding lanes already filled by the enemy via `known_enemy_lanes`) **and** bad-**synergy** exposure across ally lanes (weighted by `SYNERGY_WEIGHTS`, excluding locked allies via `known_ally_lanes`). The summed score is then halved so it stays on roughly the same scale as the original counter-only metric (UI color bands unchanged: green `<5`, red `>10`). Lower = safer blind pick. The general champion list passes no team context, so it reflects raw all-lanes exposure.
 - `COUNTER_WEIGHTS` / `SYNERGY_WEIGHTS` rows sum to 100. Synergy diagonal is 0 (no teammate in your own lane).
 
 ## LCU integration ([lcu.py](lcu.py))

@@ -17,7 +17,8 @@
       "PowerShell(.venv\\\\Scripts\\\\python -c \"import scrape_lolalytics; import crawl_champions; print\\('imports ok'\\); print\\('symbols:', hasattr\\(scrape_lolalytics, 'fetch_lane_pool_on_page'\\), hasattr\\(scrape_lolalytics, 'scrape_champion_on_page'\\), hasattr\\(scrape_lolalytics, 'ScrapeError'\\)\\)\")",
       "PowerShell(.venv\\\\Scripts\\\\python crawl_champions.py --help)",
       "WebFetch(domain:lolalytics.com)",
-      "PowerShell(.venv\\\\Scripts\\\\python -c \"from scrape_lolalytics import fetch_champion_list, scrape_champion_on_page, LOLALYTICS_SLUG_OVERRIDES; from crawl_champions import crawl_lane, scrape_with_retry; print\\('imports ok'\\)\")"
+      "PowerShell(.venv\\\\Scripts\\\\python -c \"from scrape_lolalytics import fetch_champion_list, scrape_champion_on_page, LOLALYTICS_SLUG_OVERRIDES; from crawl_champions import crawl_lane, scrape_with_retry; print\\('imports ok'\\)\")",
+      "Bash(python -c ' *)"
     ]
   }
 }

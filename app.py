@@ -155,49 +155,70 @@ def compute_blind_risk(
     lane: str,
     tier: str,
     known_enemy_lanes: set[str] | None = None,
+    known_ally_lanes: set[str] | None = None,
 ) -> dict[str, float]:
     """For each champion in `lane × tier`, compute a blind-pick risk score.
 
-    For each enemy lane L:
-        bad_pr_L = SUM(pickrate) over counter matchups where focal.WR < threshold
-        contribution = bad_pr_L * (counter_weight[lane][L] / 100)
-    score = SUM(contribution) over the 5 enemy lanes.
+    Risk is popularity-weighted exposure to bad matchups (focal WR < threshold),
+    summed over two sources:
 
-    Lower = safer blind pick (less popular bad-matchup exposure, weighted by
-    how much each enemy lane impacts your pick choice).
+      counter exposure (enemy lanes) — the enemy picks after you and can target
+      your blind pick:
+        bad_pr_L = SUM(pickrate) over counter matchups vs enemy lane L
+        contribution = bad_pr_L * (COUNTER_WEIGHTS[lane][L] / 100)
+      synergy exposure (ally lanes) — a blind pick may end up paired with a
+      popular ally it works poorly with:
+        bad_pr_L = SUM(pickrate) over synergy matchups with ally lane L
+        contribution = bad_pr_L * (SYNERGY_WEIGHTS[lane][L] / 100)
 
-    Lanes already filled by the enemy are not "blind" — the matchup is known
-    and reflected in the `vs` column. Pass them via `known_enemy_lanes` to
-    exclude their contribution from the score.
+    score = SUM(contribution) over the 5 enemy lanes + the 5 ally lanes.
+
+    Lower = safer blind pick. Lanes already filled by the enemy are not "blind"
+    — the matchup is known and reflected in the `vs` column; pass them via
+    `known_enemy_lanes`. Likewise allies already locked are known partners
+    (`known_ally_lanes`). Each known lane is excluded from its respective term.
     """
     if lane not in config.COUNTER_WEIGHTS:
         return {}
-    weights = config.COUNTER_WEIGHTS[lane]
     threshold = config.BLIND_PICK_BAD_WR_THRESHOLD
-    known = known_enemy_lanes or set()
+    known_enemy = known_enemy_lanes or set()
+    known_ally = known_ally_lanes or set()
+    counter_w = config.COUNTER_WEIGHTS[lane]
+    synergy_w = config.SYNERGY_WEIGHTS.get(lane, {})
 
     rows = conn.execute(
         """
         SELECT champion_name,
+               matchup_type,
                opponent_lane,
                COALESCE(SUM(pickrate), 0) AS bad_pr
           FROM matchups
          WHERE champion_lane = ?
            AND tier = ?
-           AND matchup_type = 'counter'
+           AND matchup_type IN ('counter', 'synergy')
            AND winrate < ?
-         GROUP BY champion_name, opponent_lane
+         GROUP BY champion_name, matchup_type, opponent_lane
         """,
         (lane, tier, threshold),
     ).fetchall()
 
     scores: dict[str, float] = {}
     for r in rows:
-        if r["opponent_lane"] in known:
+        opp_lane = r["opponent_lane"]
+        if r["matchup_type"] == "counter":
+            if opp_lane in known_enemy:
+                continue
+            weight = counter_w.get(opp_lane, 0) / 100.0
+        else:  # synergy — SYNERGY_WEIGHTS diagonal is 0, so own-lane drops out
+            if opp_lane in known_ally:
+                continue
+            weight = synergy_w.get(opp_lane, 0) / 100.0
+        if weight == 0:
             continue
-        weight = weights.get(r["opponent_lane"], 0) / 100.0
         scores[r["champion_name"]] = scores.get(r["champion_name"], 0.0) + r["bad_pr"] * weight
-    return scores
+    # Halve so the combined counter+synergy score stays on roughly the same
+    # scale as the original counter-only metric (keeps the UI color bands valid).
+    return {name: v / 2.0 for name, v in scores.items()}
 
 
 def parse_sort(
@@ -425,7 +446,9 @@ def compute_draft_scores(
     # Lanes the enemy has already filled aren't "blind" — exclude them from
     # the risk score so it shrinks toward 0 as the enemy team locks in.
     risk_scores = compute_blind_risk(
-        conn, lane, tier, known_enemy_lanes=set(enemy_team.keys()),
+        conn, lane, tier,
+        known_enemy_lanes=set(enemy_team.keys()),
+        known_ally_lanes=set(my_team.keys()),
     )
 
     out = []
@@ -572,7 +595,9 @@ def compute_pick_breakdown(
             })
 
     risk_map = compute_blind_risk(
-        conn, lane, tier, known_enemy_lanes=set(opposing_team.keys()),
+        conn, lane, tier,
+        known_enemy_lanes=set(opposing_team.keys()),
+        known_ally_lanes=set(allies_team.keys()),
     )
     return {
         "champion_name": champ,
