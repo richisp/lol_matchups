@@ -139,6 +139,22 @@
         .champion-title { font-size: 1.6rem; font-weight: 300; letter-spacing: 0.5px; }
         .champion-meta { color: #888; font-size: 0.95rem; }
 
+        /* Champion-page role tabs — one per lane the champ has records in. */
+        .role-tabs { display: flex; gap: 0.4rem; margin: 0 0 1rem; flex-wrap: wrap; }
+        .role-tab {
+            display: inline-flex; align-items: center; gap: 0.4rem;
+            padding: 0.45rem 0.75rem;
+            background: #18181b; border: 1px solid #2a2a2e; border-radius: 6px;
+            color: #aaa; font-size: 0.78rem; font-weight: 500;
+            text-transform: uppercase; letter-spacing: 0.5px; line-height: 1;
+            text-decoration: none;
+            transition: border-color 0.12s, color 0.12s, background 0.12s;
+        }
+        .role-tab:hover { border-color: #5b8def; color: #e6e6e6; text-decoration: none; }
+        .role-tab.active { background: #2a3a55; border-color: #5b8def; color: #e6e6e6; }
+        .role-tab img { width: 20px; height: 20px; filter: invert(1) brightness(0.85); }
+        .role-tab.active img { filter: invert(1) brightness(1.0); }
+
         /* Tier picker shared by index + draft. Sized to match the role
            buttons (.role-btn) so the toolbar reads as a single row. */
         .tier-picker { padding: 0; gap: 0; }

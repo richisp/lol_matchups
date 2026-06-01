@@ -20,6 +20,19 @@
     </p>
     {% endif %}
 
+    {% if champion_lanes %}
+    <div class="role-tabs">
+        {% for pos in champion_lanes %}
+        <a class="role-tab {% if pos == lane %}active{% endif %}"
+           href="{{ url_for('champion_matchups', champion_name=champion_name, lane=pos, tier=tier, type=matchup_type, min_games=min_games, sort=sort_by) }}"
+           title="{{ pos }}">
+            <img src="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-static-assets/global/default/svg/position-{{ role_icon_slug(pos) }}.svg" alt="">
+            <span>{{ pos }}</span>
+        </a>
+        {% endfor %}
+    </div>
+    {% endif %}
+
     {% if error %}
         <p class="empty">{{ error }}</p>
     {% else %}

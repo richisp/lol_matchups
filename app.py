@@ -46,6 +46,8 @@ CHAMPION_SORT_KEYS: dict[str, tuple[str, bool]] = {
     "pickrate":    ("pickrate", True),
     "banrate":     ("banrate", True),
     "games":       ("games", True),
+    "roles":       ("roles", True),
+    "lane_share":  ("lane_pr_share", True),
     "blind_risk":  ("blind_risk", False),
     "name":        ("champion_name", False),
     "role":        ("lane", False),
@@ -61,6 +63,8 @@ DRAFT_SORT_KEYS: dict[str, tuple[str, bool]] = {
     "counter": ("counter_total", True),
     "synergy": ("synergy_total", True),
     "risk":    ("blind_risk", False),
+    "roles":   ("roles", True),
+    "lane_share": ("lane_pr_share", True),
 }
 DRAFT_DEFAULT_SORT = "fit"
 
@@ -245,6 +249,48 @@ def parse_sort(
     return base, db_col, desc
 
 
+def get_role_counts(conn, tier: str) -> dict[str, int]:
+    """Map champion_name → number of distinct lanes it has `champion_stats`
+    records in for `tier` (how many roles it's played as)."""
+    rows = conn.execute(
+        "SELECT champion_name, COUNT(DISTINCT lane) AS roles "
+        "FROM champion_stats WHERE tier = ? GROUP BY champion_name",
+        (tier,),
+    ).fetchall()
+    return {r["champion_name"]: r["roles"] for r in rows}
+
+
+def get_total_pickrate(conn, tier: str) -> dict[str, float]:
+    """Map champion_name → summed pickrate across all its lanes for `tier`.
+    Denominator for each row's lane-share (lane PR / total PR)."""
+    rows = conn.execute(
+        "SELECT champion_name, COALESCE(SUM(pickrate), 0) AS total_pr "
+        "FROM champion_stats WHERE tier = ? GROUP BY champion_name",
+        (tier,),
+    ).fetchall()
+    return {r["champion_name"]: r["total_pr"] for r in rows}
+
+
+def lane_pr_share(pickrate, total_pr) -> float | None:
+    """Share (%) of a champion's total pick rate that comes from one lane.
+    100 = only played in this lane. None when no pickrate data."""
+    if not total_pr or pickrate is None:
+        return None
+    return pickrate / total_pr * 100.0
+
+
+def get_champion_lanes(conn, champion_name: str, tier: str) -> list[str]:
+    """Lanes (in canonical POSITIONS order) `champion_name` has records in for
+    `tier`. Drives the role tabs on the champion page."""
+    have = {
+        r["lane"] for r in conn.execute(
+            "SELECT DISTINCT lane FROM champion_stats WHERE champion_name = ? AND tier = ?",
+            (champion_name, tier),
+        )
+    }
+    return [p for p in POSITIONS if p in have]
+
+
 def get_champion_list(lane: str, tier: str, sort_param: str):
     with db.connect(config.DB_PATH) as conn:
         if lane == LANE_ALL:
@@ -267,10 +313,14 @@ def get_champion_list(lane: str, tier: str, sort_param: str):
                 (lane, tier),
             ).fetchall()
             risk_by_lane = {lane: compute_blind_risk(conn, lane, tier)}
+        role_counts = get_role_counts(conn, tier)
+        total_pr = get_total_pickrate(conn, tier)
 
     out = [dict(r) for r in rows]
     for d in out:
         d["blind_risk"] = risk_by_lane.get(d["lane"], {}).get(d["champion_name"], 0.0)
+        d["roles"] = role_counts.get(d["champion_name"], 0)
+        d["lane_pr_share"] = lane_pr_share(d["pickrate"], total_pr.get(d["champion_name"]))
 
     _, db_col, desc = parse_sort(sort_param)
     if db_col == "champion_name":
@@ -660,6 +710,11 @@ def draft():
             conn, active, tier,
             my_team_for_scoring, enemy_team, bans,
         )
+        role_counts = get_role_counts(conn, tier)
+        total_pr = get_total_pickrate(conn, tier)
+        for c in candidates:
+            c["roles"] = role_counts.get(c["champion_name"], 0)
+            c["lane_pr_share"] = lane_pr_share(c.get("pickrate"), total_pr.get(c["champion_name"]))
         # All champion display names (for the autocomplete datalist).
         champ_names = sorted({
             r["champion_name"] for r in conn.execute(
@@ -734,13 +789,22 @@ def champion_matchups(champion_name: str):
                                error="No data yet — run crawl_champions.py first.",
                                positions=POSITIONS)
 
-    lane = (request.args.get("lane") or "BOT").upper()
-    if lane not in POSITIONS:
-        lane = "BOT"
-
     tier = request.args.get("tier") or available_tiers[0]
     if tier not in available_tiers:
         tier = available_tiers[0]
+
+    with db.connect(config.DB_PATH) as conn:
+        champion_lanes = get_champion_lanes(conn, champion_name, tier)
+
+    # Default to the requested lane if the champ has records there; otherwise
+    # fall back to its first recorded lane (BOT if it has none at all).
+    requested_lane = (request.args.get("lane") or "").upper()
+    if requested_lane in champion_lanes:
+        lane = requested_lane
+    elif champion_lanes:
+        lane = champion_lanes[0]
+    else:
+        lane = "BOT"
 
     matchup_type = request.args.get("type", "counter")
     if matchup_type not in ("counter", "synergy"):
@@ -771,6 +835,7 @@ def champion_matchups(champion_name: str):
         lane=lane,
         tier=tier,
         positions=POSITIONS,
+        champion_lanes=champion_lanes,
         available_tiers=available_tiers,
         matchup_type=matchup_type,
         min_games=min_games,
