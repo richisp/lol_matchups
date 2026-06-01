@@ -178,7 +178,7 @@
             </div>
 
             <div class="team team-enemy">
-                <h2>Enemy team</h2>
+                <h2>Enemy team <span class="meta-inline">— drag a champ to swap lanes</span></h2>
                 <div class="team-bans" title="Enemy team's bans">
                     {% for i in ban_slots %}
                     {% set ban = enemy_bans[i] if enemy_bans|length > i else None %}
@@ -192,12 +192,13 @@
                     {% endfor %}
                 </div>
                 {% for pos in positions %}
-                <div class="slot">
+                <div class="slot enemy-slot" data-lane="{{ pos }}">
                     <div class="slot-row">
-                        <div class="slot-icon">
+                        <div class="slot-icon" {% if enemy_team[pos] %}draggable="true" title="Drag {{ enemy_team[pos] }} onto another lane to swap"{% endif %}>
                             {% if enemy_team[pos] %}
                             <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champ_id(enemy_team[pos]) }}.png"
-                                 alt="" onerror="this.style.visibility='hidden'">
+                                 alt="" draggable="false"
+                                 onerror="this.style.visibility='hidden'">
                             {% endif %}
                         </div>
                         <div class="slot-fields">

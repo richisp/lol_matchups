@@ -2,6 +2,9 @@
 //      doing a full-page navigation. Preserves scroll position and
 //      avoids the constant reload churn during champ select.
 let inflight = null;
+// Lane currently being dragged in the enemy team (null when no drag is active).
+// Declared up here because pollLcu() — invoked immediately below — reads it.
+let dragSrcLane = null;
 async function refreshDraft() {
     if (inflight) inflight.abort();
     const ctrl = new AbortController();
@@ -192,6 +195,9 @@ function syncSlot(inp, lcuValue, lastApplied) {
 }
 
 async function pollLcu() {
+    // A form swap mid-drag would cancel the drag (the source node is removed).
+    // Skip this tick; the next one (2s later) re-syncs.
+    if (dragSrcLane != null) return;
     try {
         const tierEl = document.querySelector('select[name="tier"]');
         const tier = tierEl ? tierEl.value : '';
@@ -258,3 +264,84 @@ async function pollLcu() {
 
 setInterval(pollLcu, 2000);
 pollLcu();
+
+// ---- Drag-and-drop: swap two enemy champions' lanes ----
+// Enemy lanes from the LCU are often inferred and can be wrong. Dragging one
+// enemy portrait onto another lane swaps the two `enemy_<LANE>` inputs, then
+// refreshDraft() re-renders everything (recs, scores, risk) for the new
+// assignment. The swap survives the 2s LCU poll because syncSlot() treats a
+// value that differs from what LCU last wrote as a user override.
+// (`dragSrcLane` is declared near the top of the file — see note there.)
+
+function clearDropMarks() {
+    document.querySelectorAll('.enemy-slot.drop-target, .enemy-slot.drag-source')
+        .forEach(s => s.classList.remove('drop-target', 'drag-source'));
+}
+
+function swapEnemyLanes(a, b) {
+    if (!a || !b || a === b) return;
+    const form = document.getElementById('draft-form');
+    const ia = form.querySelector(`input[name="enemy_${a}"]`);
+    const ib = form.querySelector(`input[name="enemy_${b}"]`);
+    if (!ia || !ib) return;
+    const tmp = ia.value;
+    ia.value = ib.value;
+    ib.value = tmp;
+    refreshDraft();
+}
+
+document.addEventListener('dragstart', (e) => {
+    const handle = e.target.closest('.team-enemy .slot-icon[draggable="true"]');
+    if (!handle) return;
+    const slot = handle.closest('.enemy-slot');
+    dragSrcLane = slot ? slot.dataset.lane : null;
+    if (!dragSrcLane) { dragSrcLane = null; return; }
+    e.dataTransfer.effectAllowed = 'move';
+    // Some engines require data to be set for the drag to fire `drop`.
+    try { e.dataTransfer.setData('text/plain', dragSrcLane); } catch (_) { /* ignore */ }
+    // Use the portrait as the drag ghost (the div itself would drag blank).
+    const img = handle.querySelector('img');
+    if (img && e.dataTransfer.setDragImage) {
+        try { e.dataTransfer.setDragImage(img, 26, 26); } catch (_) { /* ignore */ }
+    }
+    if (slot) slot.classList.add('drag-source');
+    // The hover tooltip would otherwise hang over the drop zone.
+    recTooltip.hidden = true;
+    recHoverRow = null;
+});
+
+// A drop target must cancel BOTH dragenter and dragover.
+document.addEventListener('dragenter', (e) => {
+    if (dragSrcLane == null) return;
+    if (e.target.closest('.team-enemy .enemy-slot')) e.preventDefault();
+});
+
+document.addEventListener('dragover', (e) => {
+    if (dragSrcLane == null) return;
+    const slot = e.target.closest('.team-enemy .enemy-slot');
+    if (!slot) return;
+    e.preventDefault();  // allow drop
+    e.dataTransfer.dropEffect = 'move';
+    if (slot.dataset.lane !== dragSrcLane) slot.classList.add('drop-target');
+});
+
+document.addEventListener('dragleave', (e) => {
+    const slot = e.target.closest('.team-enemy .enemy-slot');
+    if (slot && !slot.contains(e.relatedTarget)) slot.classList.remove('drop-target');
+});
+
+document.addEventListener('drop', (e) => {
+    if (dragSrcLane == null) return;
+    const slot = e.target.closest('.team-enemy .enemy-slot');
+    if (!slot) return;
+    e.preventDefault();
+    const dstLane = slot.dataset.lane;
+    clearDropMarks();
+    swapEnemyLanes(dragSrcLane, dstLane);
+    dragSrcLane = null;
+});
+
+document.addEventListener('dragend', () => {
+    dragSrcLane = null;
+    clearDropMarks();
+});
