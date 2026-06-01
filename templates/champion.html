@@ -76,8 +76,9 @@
                     <a class="matchup-card" href="{{ url_for('champion_matchups', champion_name=m.opponent_name, lane=m.opponent_lane, tier=tier) }}">
                         <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champ_id(m.opponent_name) }}.png"
                              alt="" loading="lazy" onerror="this.style.visibility='hidden'">
-                        <div class="wr {% if m.winrate and m.winrate >= 52 %}good{% elif m.winrate and m.winrate <= 48 %}bad{% endif %}">
-                            {{ "%.2f"|format(m.winrate) ~ "%" if m.winrate is not none else '—' }}
+                        <div class="wr {% if m.winrate and m.winrate >= 52 %}good{% elif m.winrate and m.winrate <= 48 %}bad{% endif %}"
+                             {% if m.inferred %}title="Inferred from the reverse matchup"{% endif %}>
+                            {% if m.winrate is not none %}{% if m.inferred %}~{% endif %}{{ "%.2f"|format(m.winrate) }}%{% else %}—{% endif %}
                         </div>
                         <div class="small">{{ "{:,}".format(m.games) if m.games is not none else '—' }} games</div>
                     </a>

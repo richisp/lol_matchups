@@ -16,7 +16,7 @@
             <tr>
                 <td class="bk-name">{{ it[key] }}</td>
                 <td class="bk-lane">{{ it.lane }}</td>
-                <td class="bk-wr">{% if it.winrate is not none %}{{ "%.2f"|format(it.winrate) }}%{% else %}—{% endif %}</td>
+                <td class="bk-wr" {% if it.inferred %}title="Inferred from the reverse matchup (this pair isn't on {{ it[key] }}'s list)"{% endif %}>{% if it.winrate is not none %}{% if it.inferred %}~{% endif %}{{ "%.2f"|format(it.winrate) }}%{% else %}—{% endif %}</td>
                 <td class="bk-games">{% if it.games %}{{ "{:,}".format(it.games) }}g{% else %}<span class="bk-faded">no data</span>{% endif %}</td>
                 <td class="bk-contrib {% if it.contrib > 0 %}good{% elif it.contrib < 0 %}bad{% endif %}">{% if it.contrib >= 0 %}+{% endif %}{{ "%.2f"|format(it.contrib) }}</td>
             </tr>

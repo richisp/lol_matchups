@@ -339,6 +339,17 @@ def get_champion_list(lane: str, tier: str, sort_param: str):
     return out
 
 
+def _invert_winrate(winrate, matchup_type: str):
+    """Winrate of the reverse matchup. lolalytics filters low-pickrate champs
+    off an opponent's counter list, so `A vs B` can be missing while `B vs A`
+    exists. A counter matchup is ~zero-sum, so A's WR vs B ≈ 100 − (B's WR vs A).
+    Synergy is symmetric (same game outcome from either ally's perspective), so
+    it carries over unchanged."""
+    if winrate is None:
+        return None
+    return (100.0 - winrate) if matchup_type == "counter" else winrate
+
+
 def get_matchups(champion: str, lane: str, tier: str, matchup_type: str, min_games: int, sort_by: str):
     with db.connect(config.DB_PATH) as conn:
         rows = conn.execute(
@@ -353,12 +364,41 @@ def get_matchups(champion: str, lane: str, tier: str, matchup_type: str, min_gam
             """,
             (champion, lane, tier, matchup_type, min_games),
         ).fetchall()
+        # Reverse-direction rows (this champ as the *opponent*), to fill in
+        # matchups missing from the direct list — see _invert_winrate.
+        inv_rows = conn.execute(
+            """
+            SELECT champion_name AS opponent_name, champion_lane AS opponent_lane,
+                   winrate, pickrate, games
+              FROM matchups
+             WHERE opponent_name = ?
+               AND opponent_lane = ?
+               AND tier = ?
+               AND matchup_type = ?
+               AND COALESCE(games, 0) >= ?
+            """,
+            (champion, lane, tier, matchup_type, min_games),
+        ).fetchall()
 
     by_position: dict[str, list] = {p: [] for p in POSITIONS}
+    seen: set[tuple[str, str]] = set()
     for r in rows:
         pos = r["opponent_lane"]
         if pos in by_position:
             by_position[pos].append(dict(r))
+            seen.add((r["opponent_name"], pos))
+    for r in inv_rows:
+        pos = r["opponent_lane"]
+        if pos not in by_position or (r["opponent_name"], pos) in seen:
+            continue  # prefer the direct row when both exist
+        by_position[pos].append({
+            "opponent_name": r["opponent_name"],
+            "opponent_lane": pos,
+            "winrate": _invert_winrate(r["winrate"], matchup_type),
+            "pickrate": r["pickrate"],  # opponent's own PR; unused in the view
+            "games": r["games"],
+            "inferred": True,
+        })
 
     key, reverse = MATCHUP_SORT_KEYS[sort_by]
     for pos in by_position:
@@ -490,6 +530,39 @@ def compute_draft_scores(
             key = (r["champion_name"], lane, r["opponent_name"], r["opponent_lane"], matchup_type)
             matchup_lookup[key] = dict(r)
 
+        # Reverse direction: picked opponent (as champion) vs candidate. Fills
+        # pairs missing from the direct rows — e.g. a low-pickrate enemy that
+        # doesn't appear on the candidate's own counter list. Winrate inverted
+        # for counters; synergy is symmetric. See _invert_winrate.
+        inv_rows = conn.execute(
+            f"""
+            SELECT champion_name AS opp_name, champion_lane AS opp_lane,
+                   opponent_name AS cand_name, winrate, games
+              FROM matchups
+             WHERE tier = ?
+               AND opponent_lane = ?
+               AND matchup_type = ?
+               AND champion_name IN ({name_ph})
+               AND champion_lane IN ({lane_ph})
+               AND opponent_name IN ({cand_ph})
+            """,
+            (tier, lane, matchup_type, *opp_names, *opp_lanes, *candidate_names),
+        ).fetchall()
+        for r in inv_rows:
+            if opponents.get(r["opp_lane"]) != r["opp_name"]:
+                continue
+            key = (r["cand_name"], lane, r["opp_name"], r["opp_lane"], matchup_type)
+            if key in matchup_lookup:
+                continue  # prefer the direct row
+            matchup_lookup[key] = {
+                "champion_name": r["cand_name"],
+                "opponent_name": r["opp_name"],
+                "opponent_lane": r["opp_lane"],
+                "winrate": _invert_winrate(r["winrate"], matchup_type),
+                "games": r["games"],
+                "inferred": True,
+            }
+
     _fetch_matchups(enemy_team, "counter")
     _fetch_matchups(my_team, "synergy")
 
@@ -518,6 +591,7 @@ def compute_draft_scores(
                     "opponent": e_name, "lane": e_lane,
                     "winrate": mu["winrate"], "games": mu["games"],
                     "weight": weight, "contrib": contrib,
+                    "inferred": mu.get("inferred", False),
                 })
             else:
                 counter_breakdown.append({
@@ -540,6 +614,7 @@ def compute_draft_scores(
                     "ally": t_name, "lane": t_lane,
                     "winrate": mu["winrate"], "games": mu["games"],
                     "weight": weight, "contrib": contrib,
+                    "inferred": mu.get("inferred", False),
                 })
             else:
                 synergy_breakdown.append({
@@ -590,13 +665,28 @@ def compute_pick_breakdown(
     winrate = stats_row["winrate"] if stats_row else None
 
     def _matchup(opponent: str, opp_lane: str, kind: str) -> dict | None:
-        return conn.execute(
+        row = conn.execute(
             "SELECT winrate, games FROM matchups "
             "WHERE champion_name=? AND champion_lane=? "
             "AND opponent_name=? AND opponent_lane=? "
             "AND matchup_type=? AND tier=?",
             (champ, lane, opponent, opp_lane, kind, tier),
         ).fetchone()
+        if row is not None:
+            return dict(row)
+        # Fall back to the reverse matchup (opponent vs this champ). See
+        # _invert_winrate.
+        inv = conn.execute(
+            "SELECT winrate, games FROM matchups "
+            "WHERE champion_name=? AND champion_lane=? "
+            "AND opponent_name=? AND opponent_lane=? "
+            "AND matchup_type=? AND tier=?",
+            (opponent, opp_lane, champ, lane, kind, tier),
+        ).fetchone()
+        if inv is None:
+            return None
+        return {"winrate": _invert_winrate(inv["winrate"], kind),
+                "games": inv["games"], "inferred": True}
 
     counter_total = 0.0
     counter_breakdown = []
@@ -612,6 +702,7 @@ def compute_pick_breakdown(
                 "opponent": opp_name, "lane": opp_lane,
                 "winrate": wr, "games": games,
                 "weight": weight, "contrib": contrib,
+                "inferred": bool(mu and mu.get("inferred")),
             })
         else:
             counter_breakdown.append({
@@ -636,6 +727,7 @@ def compute_pick_breakdown(
                 "ally": ally_name, "lane": ally_lane,
                 "winrate": wr, "games": games,
                 "weight": weight, "contrib": contrib,
+                "inferred": bool(mu and mu.get("inferred")),
             })
         else:
             synergy_breakdown.append({
