@@ -136,6 +136,8 @@
                             <th data-sort="counter" class="th-sort num {% if sort_key == 'counter' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Sum of weighted counter-matchup deltas vs picked enemies">vs</th>
                             <th data-sort="synergy" class="th-sort num {% if sort_key == 'synergy' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Sum of weighted synergy deltas with picked teammates">w/</th>
                             <th data-sort="risk"    class="th-sort num {% if sort_key == 'risk'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Weighted exposure to popular bad matchups in this lane × tier (lower = safer blind pick)">Risk</th>
+                            <th data-sort="roles"   class="th-sort num {% if sort_key == 'roles'   %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Number of roles this champion has records in">Roles</th>
+                            <th data-sort="lane_share" class="th-sort num {% if sort_key == 'lane_share' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Share of this champion's total pick rate that comes from this lane (100% = only played here)">Lane%</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -162,6 +164,8 @@
                             <td class="num {% if c.blind_risk < 5 %}good{% elif c.blind_risk > 10 %}bad{% endif %}">
                                 {{ "%.2f"|format(c.blind_risk) }}
                             </td>
+                            <td class="num">{{ c.roles }}</td>
+                            <td class="num {% if c.lane_pr_share is not none and c.lane_pr_share > 90 %}bad{% elif c.lane_pr_share is not none and c.lane_pr_share < 50 %}good{% endif %}">{{ "%.0f"|format(c.lane_pr_share) ~ "%" if c.lane_pr_share is not none else '—' }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>

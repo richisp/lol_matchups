@@ -44,6 +44,8 @@
                 <th data-sort="pickrate"   class="th-sort num {% if sort_key == 'pickrate'   %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Pick rate</th>
                 <th data-sort="banrate"    class="th-sort num {% if sort_key == 'banrate'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Ban rate</th>
                 <th data-sort="games"      class="th-sort num {% if sort_key == 'games'      %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Games</th>
+                <th data-sort="roles"      class="th-sort num {% if sort_key == 'roles'      %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Number of roles this champion has records in">Roles</th>
+                <th data-sort="lane_share" class="th-sort num {% if sort_key == 'lane_share' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Share of this champion's total pick rate that comes from this lane (100% = only played here)">Lane share</th>
                 <th data-sort="blind_risk" class="th-sort num {% if sort_key == 'blind_risk' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Weighted exposure to popular bad matchups (lower = safer blind pick)">Blind risk</th>
             </tr>
         </thead>
@@ -66,6 +68,8 @@
                 <td class="num">{{ "%.2f"|format(c.pickrate) ~ "%" if c.pickrate is not none else '—' }}</td>
                 <td class="num">{{ "%.2f"|format(c.banrate) ~ "%" if c.banrate is not none else '—' }}</td>
                 <td class="num">{{ "{:,}".format(c.games) if c.games is not none else '—' }}</td>
+                <td class="num">{{ c.roles }}</td>
+                <td class="num winrate {% if c.lane_pr_share is not none and c.lane_pr_share > 90 %}bad{% elif c.lane_pr_share is not none and c.lane_pr_share < 50 %}good{% endif %}">{{ "%.0f"|format(c.lane_pr_share) ~ "%" if c.lane_pr_share is not none else '—' }}</td>
                 <td class="num">{{ "%.2f"|format(c.blind_risk) }}</td>
             </tr>
             {% endfor %}
@@ -134,7 +138,7 @@
         // AJAX-refresh the page in place instead of submitting the form (which
         // would full-reload and visibly repaint the nav + filter buttons).
         // Handlers are delegated on document so they survive the content swap.
-        const NATURAL_DESC = new Set(['winrate', 'pickrate', 'banrate', 'games']);
+        const NATURAL_DESC = new Set(['winrate', 'pickrate', 'banrate', 'games', 'roles', 'lane_share']);
         let inflight = null;
 
         async function refresh() {
