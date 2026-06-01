@@ -114,6 +114,18 @@
     overflow: hidden;
 }
 .slot-icon img { width: 52px; height: 52px; display: block; }
+
+/* Enemy lane swapping: drag a champion portrait onto another enemy slot.
+   The wrapper div is the drag source (not the <img>) — dragging an image
+   element in WebView2/Chromium triggers an OS image drag-out and the
+   in-page drop never fires. */
+.team-enemy .slot-icon[draggable="true"] { cursor: grab; }
+.team-enemy .slot-icon[draggable="true"]:active { cursor: grabbing; }
+.enemy-slot.drop-target {
+    border-color: #5b8def;
+    box-shadow: 0 0 0 1px #5b8def, 0 0 14px -4px rgba(91, 141, 239, 0.55);
+}
+.enemy-slot.drag-source { opacity: 0.45; }
 .slot-fields { flex: 1; min-width: 0; }
 .slot-lane {
     font-size: 0.7rem;
