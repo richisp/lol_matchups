@@ -194,6 +194,36 @@ function syncSlot(inp, lcuValue, lastApplied) {
     return true;
 }
 
+// Were we in champ select on the previous poll? Used to detect the boundary
+// between games so manual overrides (typed picks, lane swaps) from the last
+// champ select don't bleed into the next one.
+let wasInChampSelect = false;
+
+// Wipe the board + override tracking so the next champ select syncs cleanly.
+// Without this, an overridden slot (inp.value !== lastApplied) stays sticky
+// forever and blocks the next game's LCU pick until a page reload.
+function resetDraftBoard() {
+    const form = document.getElementById('draft-form');
+    if (!form) return;
+    let changed = false;
+    for (const inp of form.querySelectorAll('input[type="text"], input[name="my_bans"], input[name="enemy_bans"]')) {
+        if (inp.value !== '') { inp.value = ''; changed = true; }
+    }
+    lcuApplied.my = {};
+    lcuApplied.enemy = {};
+    lcuApplied.my_bans = '';
+    lcuApplied.enemy_bans = '';
+    lcuApplied.lane = (document.getElementById('active-input') || {}).value || '';
+    if (changed) refreshDraft();
+}
+
+// Called whenever we're not in an active champ select. Resets once, on the
+// transition out, and only when auto-sync owns the board.
+function leftChampSelect() {
+    if (wasInChampSelect && lcuToggle.checked) resetDraftBoard();
+    wasInChampSelect = false;
+}
+
 async function pollLcu() {
     // A form swap mid-drag would cancel the drag (the source node is removed).
     // Skip this tick; the next one (2s later) re-syncs.
@@ -209,13 +239,16 @@ async function pollLcu() {
 
         if (!d.connected) {
             setBadge('LCU: client not running', 'lcu-off');
+            leftChampSelect();
             return;
         }
         if (!d.in_champ_select) {
             setBadge('LCU: not in champ select', 'lcu-idle');
+            leftChampSelect();
             return;
         }
         setBadge('LCU: in champ select', 'lcu-live');
+        wasInChampSelect = true;
 
         if (!lcuToggle.checked) return;
 
