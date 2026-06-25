@@ -51,24 +51,26 @@ LCU_POSITION_MAP: dict[str, str] = {
 }
 
 # How much my pick choice in lane X depends on the enemy pick in lane Y.
-# Concentrated on direct lane interactions — see chat history for reasoning.
-# Each row sums to 100. Used by the blind-pick score and the future champ-select helper.
+# Derived empirically by proximity_weights.py — the share of time each role
+# spends physically near each other role, aggregated over 50 ranked matches
+# (2026-06-25, 1200-unit radius). Each row sums to 100. Used by the blind-pick
+# score and the champ-select helper.
 COUNTER_WEIGHTS = {
-    "TOP":     {"TOP": 85, "JUNGLE":  8, "MID":  3, "BOT":  2, "SUPPORT":  2},
-    "JUNGLE":  {"TOP": 15, "JUNGLE": 40, "MID": 18, "BOT": 15, "SUPPORT": 12},
-    "MID":     {"TOP":  3, "JUNGLE": 10, "MID": 80, "BOT":  4, "SUPPORT":  3},
-    "BOT":     {"TOP":  2, "JUNGLE":  5, "MID":  3, "BOT": 50, "SUPPORT": 40},
-    "SUPPORT": {"TOP":  2, "JUNGLE":  5, "MID":  3, "BOT": 45, "SUPPORT": 45},
+    "TOP":     {"TOP": 61, "JUNGLE": 11, "MID":  9, "BOT": 10, "SUPPORT":  9},
+    "JUNGLE":  {"TOP": 15, "JUNGLE": 26, "MID": 20, "BOT": 18, "SUPPORT": 21},
+    "MID":     {"TOP":  9, "JUNGLE": 15, "MID": 52, "BOT": 12, "SUPPORT": 12},
+    "BOT":     {"TOP":  8, "JUNGLE": 12, "MID": 11, "BOT": 36, "SUPPORT": 33},
+    "SUPPORT": {"TOP":  8, "JUNGLE": 14, "MID": 11, "BOT": 34, "SUPPORT": 33},
 }
 
-# Same idea, for synergy with teammate in lane Y. Diagonal is 0 — you don't
-# have a teammate in your own lane. Each row sums to 100.
+# Same idea, for synergy with teammate in lane Y, from the same proximity run.
+# Diagonal is 0 — you don't have a teammate in your own lane. Each row sums to 100.
 SYNERGY_WEIGHTS = {
-    "TOP":     {"TOP":  0, "JUNGLE": 40, "MID": 25, "BOT": 20, "SUPPORT": 15},
-    "JUNGLE":  {"TOP": 22, "JUNGLE":  0, "MID": 35, "BOT": 22, "SUPPORT": 21},
-    "MID":     {"TOP": 20, "JUNGLE": 50, "MID":  0, "BOT": 10, "SUPPORT": 20},
-    "BOT":     {"TOP":  5, "JUNGLE": 15, "MID": 10, "BOT":  0, "SUPPORT": 70},
-    "SUPPORT": {"TOP":  5, "JUNGLE": 15, "MID": 10, "BOT": 70, "SUPPORT":  0},
+    "TOP":     {"TOP":  0, "JUNGLE": 28, "MID": 21, "BOT": 24, "SUPPORT": 27},
+    "JUNGLE":  {"TOP": 20, "JUNGLE":  0, "MID": 26, "BOT": 25, "SUPPORT": 29},
+    "MID":     {"TOP": 17, "JUNGLE": 29, "MID":  0, "BOT": 25, "SUPPORT": 29},
+    "BOT":     {"TOP": 11, "JUNGLE": 16, "MID": 15, "BOT":  0, "SUPPORT": 58},
+    "SUPPORT": {"TOP": 12, "JUNGLE": 18, "MID": 16, "BOT": 54, "SUPPORT":  0},
 }
 
 # A counter-matchup is "bad" if the focal champion's winrate against it is below

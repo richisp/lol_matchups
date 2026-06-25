@@ -20,7 +20,18 @@
       "PowerShell(.venv\\\\Scripts\\\\python -c \"from scrape_lolalytics import fetch_champion_list, scrape_champion_on_page, LOLALYTICS_SLUG_OVERRIDES; from crawl_champions import crawl_lane, scrape_with_retry; print\\('imports ok'\\)\")",
       "Bash(python -c ' *)",
       "Bash(node --check static/js/draft.js)",
-      "Bash(.venv/Scripts/python -c \"print\\('node not available; counting let dragSrcLane declarations'\\)\")"
+      "Bash(.venv/Scripts/python -c \"print\\('node not available; counting let dragSrcLane declarations'\\)\")",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(.venv/Scripts/python.exe lane_interaction.py --match C:/Users/ITWORK/AppData/Local/Temp/claude/c--Users-ITWORK-lol-matchups/3540d935-814f-427d-b801-36a6b234e8e6/scratchpad/m.json --timeline C:/Users/ITWORK/AppData/Local/Temp/claude/c--Users-ITWORK-lol-matchups/3540d935-814f-427d-b801-36a6b234e8e6/scratchpad/t.json)",
+      "Bash(RIOT_API_KEY=\"RGAPI-2f3780ad-c5d3-4579-806c-71f97f387d41\" .venv/Scripts/python.exe lane_interaction.py --riot-id \"Richis#EUW\" --region europe)",
+      "Bash(RIOT_API_KEY=\"RGAPI-2f3780ad-c5d3-4579-806c-71f97f387d41\" .venv/Scripts/python.exe lane_interaction.py --riot-id \"Richis#EUW\" --region europe --count 10)",
+      "Bash(RIOT_API_KEY=\"RGAPI-2f3780ad-c5d3-4579-806c-71f97f387d41\" .venv/Scripts/python.exe lane_interaction.py --riot-id \"Richis#EUW\" --region europe --count 20 --type ranked)",
+      "Bash(RIOT_API_KEY=\"RGAPI-2f3780ad-c5d3-4579-806c-71f97f387d41\" .venv/Scripts/python.exe \"C:/Users/ITWORK/AppData/Local/Temp/claude/c--Users-ITWORK-lol-matchups/3540d935-814f-427d-b801-36a6b234e8e6/scratchpad/compare.py\")",
+      "Bash(RIOT_API_KEY=\"RGAPI-2f3780ad-c5d3-4579-806c-71f97f387d41\" PYTHONPATH=\"c:/Users/ITWORK/lol_matchups\" c:/Users/ITWORK/lol_matchups/.venv/Scripts/python.exe \"C:/Users/ITWORK/AppData/Local/Temp/claude/c--Users-ITWORK-lol-matchups/3540d935-814f-427d-b801-36a6b234e8e6/scratchpad/compare.py\")",
+      "Bash(RIOT_API_KEY=\"RGAPI-2f3780ad-c5d3-4579-806c-71f97f387d41\" PYTHONPATH=\"c:/Users/ITWORK/lol_matchups\" c:/Users/ITWORK/lol_matchups/.venv/Scripts/python.exe \"C:/Users/ITWORK/AppData/Local/Temp/claude/c--Users-ITWORK-lol-matchups/3540d935-814f-427d-b801-36a6b234e8e6/scratchpad/sweep.py\")",
+      "Bash(rm lane_interaction.py)",
+      "Bash(RIOT_API_KEY=\"RGAPI-2f3780ad-c5d3-4579-806c-71f97f387d41\" .venv/Scripts/python.exe proximity_weights.py --riot-id \"Richis#EUW\" --region europe --count 1)",
+      "Bash(RIOT_API_KEY=\"RGAPI-2f3780ad-c5d3-4579-806c-71f97f387d41\" .venv/Scripts/python.exe proximity_weights.py --riot-id \"Richis#EUW\" --region europe --count 50 --type ranked)"
     ]
   }
 }
