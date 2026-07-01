@@ -33,7 +33,7 @@ Two release tracks on the same GitHub repo (`richisp/lol_matchups`):
 | File | Role |
 |---|---|
 | [launcher.py](launcher.py) | Entry point. Auto-update → DB sync → Flask thread → pywebview window. |
-| [app.py](app.py) | Flask app. Routes: `/` (champion list), `/draft` (helper), `/champion/<name>`, `/api/lcu`, `/api/settings` (get/set League install path). Holds the scoring math + `team_avg_winrate`. |
+| [app.py](app.py) | Flask app. Routes: `/` (champion list), `/draft` (helper), `/champion/<name>`, `/api/lcu`, `/api/settings` (get/set League install path). Holds the scoring math + `team_avg_score` (mean fit across a team's picks). |
 | [config.py](config.py) | Constants: `POSITIONS`, `LANES`, `LANE_TO_POSITION`, `LCU_POSITION_MAP`, `COUNTER_WEIGHTS`, `SYNERGY_WEIGHTS`, `BLIND_PICK_BAD_WR_THRESHOLD`. PyInstaller-aware `DB_PATH`. Also user-settings persistence (`SETTINGS_PATH`/`settings.json` next to the .exe, `get_setting`/`set_setting`). |
 | [db.py](db.py) | SQLite schema + upserts. Tables: `champion_stats`, `matchups`, `scrape_runs`. WAL mode. |
 | [lcu.py](lcu.py) | LoL client integration. Reads `lockfile`, polls `/lol-champ-select/v1/session`, infers lanes for picks without `assignedPosition`. `find_lockfile()` precedence: `LEAGUE_INSTALL_PATH` env → saved `league_path` setting → default install paths. `get_gameflow_phase()` powers the "keep board through the game" UI. |

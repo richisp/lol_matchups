@@ -789,12 +789,12 @@ def api_settings():
     })
 
 
-def team_avg_winrate(breakdowns: dict) -> float | None:
-    """Average individual winrate across a team's filled slots. None when no
-    slot has winrate data. `breakdowns` is the {pos: pick_breakdown} dict, whose
-    values each carry the champion's `winrate` in its lane × tier."""
-    wrs = [b["winrate"] for b in breakdowns.values() if b.get("winrate") is not None]
-    return sum(wrs) / len(wrs) if wrs else None
+def team_avg_score(breakdowns: dict) -> float | None:
+    """Average fit score across a team's filled slots. None when the team has no
+    picks. `breakdowns` is the {pos: pick_breakdown} dict, whose values each
+    carry the champion's `fit` (base 50 + counter/synergy contribs)."""
+    scores = [b["fit"] for b in breakdowns.values() if b.get("fit") is not None]
+    return sum(scores) / len(scores) if scores else None
 
 
 @app.route("/draft")
@@ -861,8 +861,8 @@ def draft():
             for pos, name in enemy_team.items()
         }
 
-    my_avg_wr = team_avg_winrate(my_pick_breakdowns)
-    enemy_avg_wr = team_avg_winrate(enemy_pick_breakdowns)
+    my_avg_score = team_avg_score(my_pick_breakdowns)
+    enemy_avg_score = team_avg_score(enemy_pick_breakdowns)
 
     raw_sort = request.args.get("sort") or DRAFT_DEFAULT_SORT
     sort_key, sort_col, sort_desc = parse_sort(
@@ -886,8 +886,8 @@ def draft():
         available_tiers=available_tiers,
         my_team=my_team,
         enemy_team=enemy_team,
-        my_avg_wr=my_avg_wr,
-        enemy_avg_wr=enemy_avg_wr,
+        my_avg_score=my_avg_score,
+        enemy_avg_score=enemy_avg_score,
         my_pick_breakdowns=my_pick_breakdowns,
         enemy_pick_breakdowns=enemy_pick_breakdowns,
         my_bans=my_bans_list,
