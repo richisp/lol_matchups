@@ -33,11 +33,16 @@ _champion_by_key: dict[int, str] | None = None
 
 
 def find_lockfile() -> Path | None:
-    custom = os.environ.get("LEAGUE_INSTALL_PATH")
+    # Precedence: LEAGUE_INSTALL_PATH env var → user-saved setting → defaults.
+    # The saved setting is how end users point the app at a non-standard install
+    # location from the in-app settings panel (see /api/settings).
+    custom = os.environ.get("LEAGUE_INSTALL_PATH") or config.get_setting("league_path")
     if custom:
-        p = Path(custom) / "lockfile"
-        if p.exists():
-            return p
+        p = Path(custom)
+        # Accept either the install directory or a direct path to the lockfile.
+        candidate = p if p.name == "lockfile" else p / "lockfile"
+        if candidate.exists():
+            return candidate
     for p in LOCKFILE_PATHS:
         if p.exists():
             return p
@@ -83,6 +88,29 @@ def get_champ_select_session() -> dict | None:
         )
         if r.status_code == 200:
             return r.json()
+        return None
+    except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError):
+        return None
+
+
+def get_gameflow_phase() -> str | None:
+    """Current client gameflow phase, e.g. 'Lobby', 'Matchmaking', 'ChampSelect',
+    'InProgress', 'WaitingForStats', 'EndOfGame', 'None'. Used by the UI to keep
+    the draft board visible through the game (only wiping on the next champ
+    select) and to show a more informative status badge. None if unreachable."""
+    creds = read_credentials()
+    if not creds:
+        return None
+    url = f"{creds['protocol']}://{creds['host']}:{creds['port']}/lol-gameflow/v1/gameflow-phase"
+    try:
+        r = httpx.get(
+            url,
+            auth=("riot", creds["password"]),
+            verify=False,
+            timeout=2.0,
+        )
+        if r.status_code == 200:
+            return r.json()  # a bare JSON string like "InProgress"
         return None
     except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError):
         return None
@@ -296,7 +324,10 @@ def get_state(dd_version: str, tier: str | None = None, conn=None) -> dict[str, 
     """
     if not find_lockfile():
         return {"connected": False, "reason": "no_client"}
+    phase = get_gameflow_phase()
     raw = get_champ_select_session()
     if raw is None:
-        return {"connected": True, "in_champ_select": False}
-    return normalize_session(raw, dd_version, tier=tier, conn=conn)
+        return {"connected": True, "in_champ_select": False, "phase": phase}
+    state = normalize_session(raw, dd_version, tier=tier, conn=conn)
+    state["phase"] = phase
+    return state

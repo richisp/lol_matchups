@@ -37,6 +37,15 @@
     </div>
     {% endmacro %}
 
+    {# Average-winrate badge for a team header. `avg` is None when no slot has data. #}
+    {% macro team_avg_wr(avg) %}
+        {% if avg is not none %}
+        <span class="team-avg-wr" title="Average winrate of picked champions on this team">
+            Avg WR <span class="winrate {% if avg >= 52 %}good{% elif avg <= 48 %}bad{% endif %}">{{ "%.1f"|format(avg) }}%</span>
+        </span>
+        {% endif %}
+    {% endmacro %}
+
     {% macro pick_tooltip(c, lane) %}
     <div class="bk-header">
         <strong>{{ c.champion_name }}</strong>
@@ -65,6 +74,20 @@
             <input type="checkbox" id="lcu-sync" checked>
             <span>auto-sync</span>
         </label>
+        <button type="button" id="settings-toggle" class="toolbar-btn" title="Settings">⚙</button>
+    </div>
+
+    <div id="settings-panel" class="settings-panel" hidden>
+        <label class="settings-field">
+            <span>League of Legends install folder</span>
+            <input type="text" id="league-path-input" spellcheck="false" autocomplete="off"
+                   placeholder="C:\Riot Games\League of Legends">
+        </label>
+        <p class="settings-hint">The folder that contains <code>lockfile</code> (the client writes it there while running). Leave blank to auto-detect the default locations.</p>
+        <div class="settings-actions">
+            <button type="button" id="league-path-save">Save</button>
+            <span id="settings-status" class="settings-status"></span>
+        </div>
     </div>
 
     {% if error %}
@@ -78,7 +101,7 @@
         <input type="hidden" name="enemy_bans" value="{{ enemy_bans_str }}" id="enemy-bans-input">
         <div class="draft-board">
             <div class="team team-mine">
-                <h2>Your team</h2>
+                <h2>Your team {{ team_avg_wr(my_avg_wr) }}</h2>
                 <div class="team-bans" title="Your team's bans">
                     {% for i in ban_slots %}
                     {% set ban = my_bans[i] if my_bans|length > i else None %}
@@ -178,7 +201,7 @@
             </div>
 
             <div class="team team-enemy">
-                <h2>Enemy team <span class="meta-inline">— drag a champ to swap lanes</span></h2>
+                <h2>Enemy team {{ team_avg_wr(enemy_avg_wr) }}<span class="meta-inline">— drag a champ to swap lanes</span></h2>
                 <div class="team-bans" title="Enemy team's bans">
                     {% for i in ban_slots %}
                     {% set ban = enemy_bans[i] if enemy_bans|length > i else None %}

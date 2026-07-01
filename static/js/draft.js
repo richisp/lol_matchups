@@ -194,17 +194,18 @@ function syncSlot(inp, lcuValue, lastApplied) {
     return true;
 }
 
-// Were we in champ select on the previous poll? Used to detect the boundary
-// between games so manual overrides (typed picks, lane swaps) from the last
-// champ select don't bleed into the next one.
+// Were we in champ select on the previous poll? Used to detect the *start* of
+// a new champ select (the rising edge) so we wipe last game's board exactly
+// once, right as a new draft begins — never during or after the game itself.
 let wasInChampSelect = false;
 
-// Wipe the board + override tracking so the next champ select syncs cleanly.
-// Without this, an overridden slot (inp.value !== lastApplied) stays sticky
-// forever and blocks the next game's LCU pick until a page reload.
-function resetDraftBoard() {
+// Clear inputs + override tracking. Does NOT refresh on its own — the caller
+// re-renders (usually the same poll's sync pass immediately repopulates it).
+// Clearing the tracking is what lets the next game's LCU picks land: an
+// overridden slot (inp.value !== lastApplied) would otherwise stay sticky.
+function clearDraftBoard() {
     const form = document.getElementById('draft-form');
-    if (!form) return;
+    if (!form) return false;
     let changed = false;
     for (const inp of form.querySelectorAll('input[type="text"], input[name="my_bans"], input[name="enemy_bans"]')) {
         if (inp.value !== '') { inp.value = ''; changed = true; }
@@ -214,14 +215,19 @@ function resetDraftBoard() {
     lcuApplied.my_bans = '';
     lcuApplied.enemy_bans = '';
     lcuApplied.lane = (document.getElementById('active-input') || {}).value || '';
-    if (changed) refreshDraft();
+    return changed;
 }
 
-// Called whenever we're not in an active champ select. Resets once, on the
-// transition out, and only when auto-sync owns the board.
-function leftChampSelect() {
-    if (wasInChampSelect && lcuToggle.checked) resetDraftBoard();
-    wasInChampSelect = false;
+// Human-readable badge for phases outside champ select. We deliberately keep
+// the board populated across all of these — the user wants to keep seeing who
+// counters them during the game — and only wipe when the next champ select
+// starts (see the rising-edge handling in pollLcu).
+function badgeForNonChampSelect(phase) {
+    if (phase === 'InProgress') return ['LCU: in game (draft kept)', 'lcu-idle'];
+    if (phase === 'WaitingForStats' || phase === 'PreEndOfGame' || phase === 'EndOfGame')
+        return ['LCU: game over (draft kept)', 'lcu-idle'];
+    if (phase === 'Reconnect') return ['LCU: reconnecting', 'lcu-idle'];
+    return ['LCU: not in champ select', 'lcu-idle'];
 }
 
 async function pollLcu() {
@@ -239,15 +245,22 @@ async function pollLcu() {
 
         if (!d.connected) {
             setBadge('LCU: client not running', 'lcu-off');
-            leftChampSelect();
+            wasInChampSelect = false;
             return;
         }
         if (!d.in_champ_select) {
-            setBadge('LCU: not in champ select', 'lcu-idle');
-            leftChampSelect();
+            const [text, cls] = badgeForNonChampSelect(d.phase || '');
+            setBadge(text, cls);
+            // NOTE: intentionally do not clear the board here — it stays visible
+            // through the game and is only wiped when the next draft starts.
+            wasInChampSelect = false;
             return;
         }
         setBadge('LCU: in champ select', 'lcu-live');
+
+        // Rising edge into a fresh champ select: wipe the previous game's board
+        // so stale picks/bans don't linger. Only when auto-sync owns the board.
+        if (!wasInChampSelect && lcuToggle.checked) clearDraftBoard();
         wasInChampSelect = true;
 
         if (!lcuToggle.checked) return;
@@ -297,6 +310,68 @@ async function pollLcu() {
 
 setInterval(pollLcu, 2000);
 pollLcu();
+
+// ---- Settings: manual League install path ----
+// Lets a user whose client lives somewhere non-standard point the LCU
+// integration at the right folder (the one holding `lockfile`).
+const settingsToggle = document.getElementById('settings-toggle');
+const settingsPanel = document.getElementById('settings-panel');
+const leaguePathInput = document.getElementById('league-path-input');
+const leaguePathSave = document.getElementById('league-path-save');
+const settingsStatus = document.getElementById('settings-status');
+
+function renderSettingsStatus(d) {
+    if (!settingsStatus) return;
+    if (d.lockfile_found) {
+        settingsStatus.textContent = '✓ Client found: ' + d.lockfile_path;
+        settingsStatus.className = 'settings-status ok';
+    } else {
+        settingsStatus.textContent = '✗ No lockfile found — set the folder above, or start the client.';
+        settingsStatus.className = 'settings-status err';
+    }
+}
+
+async function loadSettings() {
+    try {
+        const r = await fetch('/api/settings', { cache: 'no-store' });
+        const d = await r.json();
+        if (leaguePathInput && document.activeElement !== leaguePathInput) {
+            leaguePathInput.value = d.league_path || '';
+        }
+        renderSettingsStatus(d);
+    } catch (_) { /* offline / not frozen — ignore */ }
+}
+
+async function saveSettings() {
+    if (!leaguePathInput) return;
+    if (settingsStatus) {
+        settingsStatus.textContent = 'Saving…';
+        settingsStatus.className = 'settings-status';
+    }
+    try {
+        const r = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ league_path: leaguePathInput.value.trim() }),
+        });
+        renderSettingsStatus(await r.json());
+        pollLcu();  // re-check LCU immediately with the new path
+    } catch (_) {
+        if (settingsStatus) {
+            settingsStatus.textContent = 'Save failed';
+            settingsStatus.className = 'settings-status err';
+        }
+    }
+}
+
+if (settingsToggle) settingsToggle.addEventListener('click', () => {
+    settingsPanel.hidden = !settingsPanel.hidden;
+    if (!settingsPanel.hidden) loadSettings();
+});
+if (leaguePathSave) leaguePathSave.addEventListener('click', saveSettings);
+if (leaguePathInput) leaguePathInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); saveSettings(); }
+});
 
 // ---- Drag-and-drop: swap two enemy champions' lanes ----
 // Enemy lanes from the LCU are often inferred and can be wrong. Dragging one

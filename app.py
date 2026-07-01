@@ -770,6 +770,33 @@ def api_lcu():
     return jsonify(lcu.get_state(get_dd_version()))
 
 
+@app.route("/api/settings", methods=["GET", "POST"])
+def api_settings():
+    """Get/set user runtime settings. Currently just `league_path` — the folder
+    (or direct lockfile path) the LCU integration should read for the League
+    client. POST a JSON body {"league_path": "..."} to update; empty clears it
+    and reverts to auto-detection. Always returns the current lockfile status so
+    the UI can tell the user whether the client was found."""
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        config.set_setting("league_path", (data.get("league_path") or "").strip())
+    lockfile = lcu.find_lockfile()
+    return jsonify({
+        "league_path": config.get_setting("league_path", ""),
+        "lockfile_found": lockfile is not None,
+        "lockfile_path": str(lockfile) if lockfile else None,
+        "default_paths": [str(p) for p in lcu.LOCKFILE_PATHS],
+    })
+
+
+def team_avg_winrate(breakdowns: dict) -> float | None:
+    """Average individual winrate across a team's filled slots. None when no
+    slot has winrate data. `breakdowns` is the {pos: pick_breakdown} dict, whose
+    values each carry the champion's `winrate` in its lane × tier."""
+    wrs = [b["winrate"] for b in breakdowns.values() if b.get("winrate") is not None]
+    return sum(wrs) / len(wrs) if wrs else None
+
+
 @app.route("/draft")
 def draft():
     available_tiers = get_available_tiers()
@@ -834,6 +861,9 @@ def draft():
             for pos, name in enemy_team.items()
         }
 
+    my_avg_wr = team_avg_winrate(my_pick_breakdowns)
+    enemy_avg_wr = team_avg_winrate(enemy_pick_breakdowns)
+
     raw_sort = request.args.get("sort") or DRAFT_DEFAULT_SORT
     sort_key, sort_col, sort_desc = parse_sort(
         raw_sort, DRAFT_SORT_KEYS, DRAFT_DEFAULT_SORT,
@@ -856,6 +886,8 @@ def draft():
         available_tiers=available_tiers,
         my_team=my_team,
         enemy_team=enemy_team,
+        my_avg_wr=my_avg_wr,
+        enemy_avg_wr=enemy_avg_wr,
         my_pick_breakdowns=my_pick_breakdowns,
         enemy_pick_breakdowns=enemy_pick_breakdowns,
         my_bans=my_bans_list,
