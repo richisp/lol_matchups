@@ -31,7 +31,10 @@
       "Bash(RIOT_API_KEY=\"RGAPI-2f3780ad-c5d3-4579-806c-71f97f387d41\" PYTHONPATH=\"c:/Users/ITWORK/lol_matchups\" c:/Users/ITWORK/lol_matchups/.venv/Scripts/python.exe \"C:/Users/ITWORK/AppData/Local/Temp/claude/c--Users-ITWORK-lol-matchups/3540d935-814f-427d-b801-36a6b234e8e6/scratchpad/sweep.py\")",
       "Bash(rm lane_interaction.py)",
       "Bash(RIOT_API_KEY=\"RGAPI-2f3780ad-c5d3-4579-806c-71f97f387d41\" .venv/Scripts/python.exe proximity_weights.py --riot-id \"Richis#EUW\" --region europe --count 1)",
-      "Bash(RIOT_API_KEY=\"RGAPI-2f3780ad-c5d3-4579-806c-71f97f387d41\" .venv/Scripts/python.exe proximity_weights.py --riot-id \"Richis#EUW\" --region europe --count 50 --type ranked)"
+      "Bash(RIOT_API_KEY=\"RGAPI-2f3780ad-c5d3-4579-806c-71f97f387d41\" .venv/Scripts/python.exe proximity_weights.py --riot-id \"Richis#EUW\" --region europe --count 50 --type ranked)",
+      "Bash(python -m py_compile app.py lcu.py config.py)",
+      "Bash(ls -la settings.json)",
+      "Bash(grep -n \"settings.json\\\\|lolalytics.db\\\\|.db\" .gitignore)"
     ]
   }
 }

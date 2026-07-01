@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from pathlib import Path
@@ -15,6 +16,36 @@ else:
     APP_DIR = Path(__file__).parent
 
 DB_PATH = APP_DIR / "lolalytics.db"
+
+# User-editable runtime settings (League install path, etc.), persisted next to
+# the .exe so they survive auto-updates. Kept separate from the DB so the
+# sqlite file-lock ordering gotcha (sync before connect) doesn't apply.
+SETTINGS_PATH = APP_DIR / "settings.json"
+
+
+def load_settings() -> dict:
+    try:
+        return json.loads(SETTINGS_PATH.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def get_setting(key: str, default=None):
+    return load_settings().get(key, default)
+
+
+def set_setting(key: str, value) -> None:
+    """Persist a single setting. An empty/None value removes the key so it
+    falls back to auto-detection."""
+    settings = load_settings()
+    if value in (None, ""):
+        settings.pop(key, None)
+    else:
+        settings[key] = value
+    try:
+        SETTINGS_PATH.write_text(json.dumps(settings, indent=2))
+    except OSError:
+        pass
 
 DEFAULT_TIER = os.environ.get("LOLALYTICS_TIER", "emerald_plus")
 

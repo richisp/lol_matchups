@@ -33,10 +33,10 @@ Two release tracks on the same GitHub repo (`richisp/lol_matchups`):
 | File | Role |
 |---|---|
 | [launcher.py](launcher.py) | Entry point. Auto-update → DB sync → Flask thread → pywebview window. |
-| [app.py](app.py) | Flask app. Routes: `/` (champion list), `/draft` (helper), `/champion/<name>`, `/api/lcu`. Holds the scoring math. |
-| [config.py](config.py) | Constants: `POSITIONS`, `LANES`, `LANE_TO_POSITION`, `LCU_POSITION_MAP`, `COUNTER_WEIGHTS`, `SYNERGY_WEIGHTS`, `BLIND_PICK_BAD_WR_THRESHOLD`. PyInstaller-aware `DB_PATH`. |
+| [app.py](app.py) | Flask app. Routes: `/` (champion list), `/draft` (helper), `/champion/<name>`, `/api/lcu`, `/api/settings` (get/set League install path). Holds the scoring math + `team_avg_winrate`. |
+| [config.py](config.py) | Constants: `POSITIONS`, `LANES`, `LANE_TO_POSITION`, `LCU_POSITION_MAP`, `COUNTER_WEIGHTS`, `SYNERGY_WEIGHTS`, `BLIND_PICK_BAD_WR_THRESHOLD`. PyInstaller-aware `DB_PATH`. Also user-settings persistence (`SETTINGS_PATH`/`settings.json` next to the .exe, `get_setting`/`set_setting`). |
 | [db.py](db.py) | SQLite schema + upserts. Tables: `champion_stats`, `matchups`, `scrape_runs`. WAL mode. |
-| [lcu.py](lcu.py) | LoL client integration. Reads `lockfile`, polls `/lol-champ-select/v1/session`, infers lanes for picks without `assignedPosition`. |
+| [lcu.py](lcu.py) | LoL client integration. Reads `lockfile`, polls `/lol-champ-select/v1/session`, infers lanes for picks without `assignedPosition`. `find_lockfile()` precedence: `LEAGUE_INSTALL_PATH` env → saved `league_path` setting → default install paths. `get_gameflow_phase()` powers the "keep board through the game" UI. |
 | [scrape_lolalytics.py](scrape_lolalytics.py) | Playwright scraper for champion build pages (clicks `data-type=strong_counter` and `good_synergy` tabs, scrolls carousels). `scrape_champion_on_page` reuses an existing `Page`; `scrape_champion` is a CLI wrapper that owns its own browser. `fetch_champion_list()` pulls every champion's display name + lolalytics URL slug from Riot's Data Dragon — the crawler uses this instead of lolalytics' tier list, so a tier-list layout regression can no longer silently drop champs. With `min_pickrate_for_matchups>0`, the scraper extracts overall stats first and short-circuits before the (slow) tab work if pickrate is below threshold (`_skipped_low_pr=True` flag in result). |
 | [crawl_champions.py](crawl_champions.py) | CLI driver. Pulls the champion list from Data Dragon once, then runs the 5 lanes in parallel `ThreadPoolExecutor` workers (one Chromium each, page reused across all candidates). For each (champ, lane): if pickrate < `--min-pickrate` (default 0.3), no DB write and no `scrape_runs` row (next full crawl re-checks); otherwise persist + mark `ok`/`empty`. Retries transient navigation timeouts with 2s/8s backoff. Exits non-zero if Data Dragon fetch failed or any lane scrapes <`LANE_OK_FLOOR` (20) champs, so the workflow's upload step is skipped on structural breakage. |
 | [sync.py](sync.py) | Pulls newer `lolalytics.db` from `db-latest` release on startup. Silent on failure. Must run before any sqlite connection (Windows file-lock). |
@@ -86,12 +86,13 @@ fit = 50.0
 
 ## LCU integration ([lcu.py](lcu.py))
 
-- Reads `C:\Riot Games\League of Legends\lockfile` (override via `LEAGUE_INSTALL_PATH` env). Format: `name:pid:port:password:protocol`.
+- Reads `C:\Riot Games\League of Legends\lockfile`. Format: `name:pid:port:password:protocol`. Lookup precedence: `LEAGUE_INSTALL_PATH` env → user-saved `league_path` (settings.json, set via the ⚙ panel in the draft toolbar → `/api/settings`) → default install paths. `league_path` accepts either the install folder or a direct path to the `lockfile`.
 - Hits `https://127.0.0.1:<port>/lol-champ-select/v1/session` with HTTP basic auth `riot:<password>`, `verify=False`.
 - `championPickIntent` (hover) AND `championId` (locked) both surface as picks.
 - Picks without `assignedPosition` are placed by `best_lane_assignment()` — brute-force permutation maximizing summed pickrate over unoccupied lanes.
 - Bans are read from `actions[]` (with `actorCellId` to split my/enemy) and fall back to structured `session["bans"]`.
-- Frontend polls `/api/lcu?tier=...` every 2s; auto-fills slots only when the user hasn't typed an override.
+- Frontend polls `/api/lcu?tier=...` every 2s; auto-fills slots only when the user hasn't typed an override. `/api/lcu` also returns the client `gameflow phase`.
+- **Board persists through the game**: the draft board is *not* wiped when champ select ends. It stays visible (so you can still see who counters your team) across `InProgress`/post-game phases and is cleared only on the **rising edge** of the *next* champ select (`draft.js` tracks `wasInChampSelect`; the wipe is guarded by the auto-sync toggle). This is a change from the old "reset on leaving champ select" behavior.
 
 ## Sort param convention
 
