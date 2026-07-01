@@ -37,11 +37,11 @@
     </div>
     {% endmacro %}
 
-    {# Average-winrate badge for a team header. `avg` is None when no slot has data. #}
-    {% macro team_avg_wr(avg) %}
+    {# Average-score badge for a team header. `avg` is None when the team has no picks. #}
+    {% macro team_avg_score(avg) %}
         {% if avg is not none %}
-        <span class="team-avg-wr" title="Average winrate of picked champions on this team">
-            Avg WR <span class="winrate {% if avg >= 52 %}good{% elif avg <= 48 %}bad{% endif %}">{{ "%.1f"|format(avg) }}%</span>
+        <span class="team-avg-wr" title="Average fit score of picked champions on this team">
+            Avg Score <span class="winrate {% if avg >= 52 %}good{% elif avg <= 48 %}bad{% endif %}">{{ "%.2f"|format(avg) }}</span>
         </span>
         {% endif %}
     {% endmacro %}
@@ -101,7 +101,7 @@
         <input type="hidden" name="enemy_bans" value="{{ enemy_bans_str }}" id="enemy-bans-input">
         <div class="draft-board">
             <div class="team team-mine">
-                <h2>Your team {{ team_avg_wr(my_avg_wr) }}</h2>
+                <h2>Your team {{ team_avg_score(my_avg_score) }}</h2>
                 <div class="team-bans" title="Your team's bans">
                     {% for i in ban_slots %}
                     {% set ban = my_bans[i] if my_bans|length > i else None %}
@@ -201,7 +201,7 @@
             </div>
 
             <div class="team team-enemy">
-                <h2>Enemy team {{ team_avg_wr(enemy_avg_wr) }}<span class="meta-inline">— drag a champ to swap lanes</span></h2>
+                <h2>Enemy team {{ team_avg_score(enemy_avg_score) }}<span class="meta-inline">— drag a champ to swap lanes</span></h2>
                 <div class="team-bans" title="Enemy team's bans">
                     {% for i in ban_slots %}
                     {% set ban = enemy_bans[i] if enemy_bans|length > i else None %}
