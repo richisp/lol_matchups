@@ -864,6 +864,20 @@ def draft():
     my_avg_score = team_avg_score(my_pick_breakdowns)
     enemy_avg_score = team_avg_score(enemy_pick_breakdowns)
 
+    # How each other picked champ moves *your* (active-slot) pick's score, so
+    # the board can show — next to every other champ — the same contribution
+    # the hover tooltip lists. Keyed by the other champ's lane. Both maps are
+    # empty until the active slot is filled (no "your pick" to score against).
+    active_bk = my_pick_breakdowns.get(active)
+    active_champ = my_team.get(active)
+    enemy_impact = {}
+    ally_impact = {}
+    if active_bk:
+        for it in active_bk["counter_breakdown"]:
+            enemy_impact[it["lane"]] = it
+        for it in active_bk["synergy_breakdown"]:
+            ally_impact[it["lane"]] = it
+
     raw_sort = request.args.get("sort") or DRAFT_DEFAULT_SORT
     sort_key, sort_col, sort_desc = parse_sort(
         raw_sort, DRAFT_SORT_KEYS, DRAFT_DEFAULT_SORT,
@@ -890,6 +904,9 @@ def draft():
         enemy_avg_score=enemy_avg_score,
         my_pick_breakdowns=my_pick_breakdowns,
         enemy_pick_breakdowns=enemy_pick_breakdowns,
+        active_champ=active_champ,
+        enemy_impact=enemy_impact,
+        ally_impact=ally_impact,
         my_bans=my_bans_list,
         enemy_bans=enemy_bans_list,
         my_bans_str=",".join(my_bans_list),

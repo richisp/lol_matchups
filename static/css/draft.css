@@ -227,6 +227,18 @@
     line-height: 1;
 }
 
+/* Your active pick's matchup winrate vs this champ, shown in brackets right
+   after the slot's own score, e.g. 54.50 (52.0). White + smaller so the
+   score leads. */
+.slot-impact-inline {
+    font-size: 0.8rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: #e6e6e6;
+}
+.slot-impact-inline .good { color: #5cd65c; }
+.slot-impact-inline .bad  { color: #e85a5a; }
+
 .recs {
     display: flex;
     flex-direction: column;

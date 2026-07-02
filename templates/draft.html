@@ -29,11 +29,14 @@
     {% endmacro %}
 
     {# Compact score readout shown directly on a filled slot — same number
-       as the tooltip's "Score", visible without hovering. #}
-    {% macro slot_score(c) %}
-    <div class="slot-score" title="Score = base + counter contribs + synergy contribs">
+       as the tooltip's "Score", visible without hovering. When `impact` is
+       given (a counter/synergy breakdown row vs YOUR active pick), the raw
+       matchup winrate delta (winrate − 50) is appended in brackets, e.g.
+       54.50 (+2.0) — how this champ moves your pick's matchup. #}
+    {% macro slot_score(c, impact=None) %}
+    <div class="slot-score" title="Score = base + counter contribs + synergy contribs{% if impact and impact.winrate is not none %} · (…) = your pick's {% if impact.inferred %}~{% endif %}{{ '%.2f'|format(impact.winrate) }}% matchup vs {{ impact.opponent or impact.ally }}{% endif %}">
         <div class="slot-score-label">Score</div>
-        <div class="slot-score-value winrate {% if c.fit >= 52 %}good{% elif c.fit <= 48 %}bad{% endif %}">{{ "%.2f"|format(c.fit) }}</div>
+        <div class="slot-score-value winrate {% if c.fit >= 52 %}good{% elif c.fit <= 48 %}bad{% endif %}">{{ "%.2f"|format(c.fit) }}{% if impact and impact.winrate is not none %} <span class="slot-impact-inline">(<span class="{% if impact.winrate > 52 %}good{% elif impact.winrate < 48 %}bad{% endif %}">{% if impact.inferred %}~{% endif %}{{ "%.1f"|format(impact.winrate) }}</span>)</span>{% endif %}</div>
     </div>
     {% endmacro %}
 
@@ -136,7 +139,7 @@
                                    autocomplete="off">
                         </div>
                         {% if my_pick_breakdowns and my_pick_breakdowns[pos] %}
-                        {{ slot_score(my_pick_breakdowns[pos]) }}
+                        {{ slot_score(my_pick_breakdowns[pos], ally_impact[pos] if pos != active else None) }}
                         {% endif %}
                     </div>
                     {% if my_pick_breakdowns and my_pick_breakdowns[pos] %}
@@ -233,7 +236,7 @@
                                    autocomplete="off">
                         </div>
                         {% if enemy_pick_breakdowns and enemy_pick_breakdowns[pos] %}
-                        {{ slot_score(enemy_pick_breakdowns[pos]) }}
+                        {{ slot_score(enemy_pick_breakdowns[pos], enemy_impact[pos]) }}
                         {% endif %}
                     </div>
                     {% if enemy_pick_breakdowns and enemy_pick_breakdowns[pos] %}
