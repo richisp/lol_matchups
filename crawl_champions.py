@@ -5,7 +5,7 @@ tier-list page, since that's the layout that previously dropped legitimate
 champions like Renekton silently. For each (champion, lane) we load the
 lolalytics build page and:
   - if the champ's pickrate in that lane is below --min-pickrate (default
-    0.3): skip (no DB write, no scrape_runs row);
+    0.1): skip (no DB write, no scrape_runs row);
   - else extract overall + counter + synergy carousels and persist.
 
 Lanes run in parallel. Each lane's worker thread owns one Chromium and
@@ -187,10 +187,10 @@ def main() -> None:
     parser.add_argument("--lanes", default="",
                         help="Comma-separated lanes (top, jungle, middle, bottom, support); "
                              "default: all five (run in parallel)")
-    parser.add_argument("--min-pickrate", type=float, default=0.3,
+    parser.add_argument("--min-pickrate", type=float, default=0.1,
                         help="For each (champ, lane), if the lolalytics overall pickrate "
                              "is below this %% the page is skipped (no DB write, no "
-                             "matchups). Default 0.3.")
+                             "matchups). Default 0.1.")
     parser.add_argument("--limit", type=int, default=0,
                         help="Stop each lane after N successful scrapes (0 = unlimited)")
     parser.add_argument("--skip-failed", action="store_true",
