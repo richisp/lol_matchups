@@ -165,6 +165,15 @@ def main() -> None:
     except Exception as e:  # noqa: BLE001 — never let sync break startup
         logging.warning("DB sync raised: %s", e)
 
+    # 2b. The synced snapshot may predate champion attributes (or the crawl's
+    #     attribute step flaked) — self-heal so the comp UI isn't empty.
+    #     Still before any Flask sqlite connection.
+    try:
+        import fetch_attributes
+        fetch_attributes.ensure_attributes()
+    except Exception as e:  # noqa: BLE001 — never let this break startup
+        logging.warning("attribute fetch raised: %s", e)
+
     # 3. Server + window.
     threading.Thread(target=_start_flask, daemon=True).start()
 

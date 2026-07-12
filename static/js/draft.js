@@ -66,7 +66,7 @@ async function refreshDraft() {
 }
 
 // Event delegation: handlers stay live after refreshDraft swaps the form.
-const RECS_NATURAL_DESC = new Set(['fit', 'winrate', 'counter', 'synergy', 'roles', 'lane_share']);
+const RECS_NATURAL_DESC = new Set(['fit', 'winrate', 'counter', 'synergy', 'roles', 'lane_share', 'comp']);
 
 document.addEventListener('click', (e) => {
     const slotPick = e.target.closest('.slot-pick');

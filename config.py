@@ -107,3 +107,67 @@ SYNERGY_WEIGHTS = {
 # A counter-matchup is "bad" if the focal champion's winrate against it is below
 # this threshold. Used by the blind-pick score.
 BLIND_PICK_BAD_WR_THRESHOLD = 48.0
+
+# ---------------------------------------------------------------------------
+# Team-comp classification (draws on champion_attributes; see app.py's
+# compute_comp_fits / team_comp_profile).
+#
+# The five canonical comp archetypes. Champions get a soft 0-1 fit score for
+# each — multi-membership, not exclusive assignment (Orianna legitimately
+# fits three comps; Fiora is ~pure split).
+TEAM_COMPS: tuple[str, ...] = ("f2b", "dive", "poke", "pick", "split")
+
+COMP_LABELS: dict[str, str] = {
+    "f2b":   "Front-to-back",
+    "dive":  "Dive",
+    "poke":  "Poke",
+    "pick":  "Pick",
+    "split": "Split",
+}
+
+def _c(f2b: float, dive: float, poke: float, pick: float, split: float) -> dict[str, float]:
+    return {"f2b": f2b, "dive": dive, "poke": poke, "pick": pick, "split": split}
+
+
+# Riot subclass tag -> base comp fit (0-1). Subclasses carry the signal
+# attribute ratings can't: CC *direction*. A Vanguard (Malphite) and a Warden
+# (Braum) both rate toughness 3 / control 3, but one initiates dives and the
+# other peels for a front-to-back comp.
+#
+# Broad base classes (FIGHTER/MAGE/TANK/SUPPORT — Meraki mixes them into the
+# same `roles` list) are deliberately NOT in this table: every champion has
+# at least one subclass-level tag, and subclasses are strictly more accurate.
+# Judgment lives in this one transparent, tweakable table instead of in
+# hand-ratings of 170 champions.
+SUBCLASS_COMP_FIT: dict[str, dict[str, float]] = {
+    #                f2b   dive  poke  pick  split
+    "VANGUARD":   _c(0.3,  1.0,  0.0,  0.5,  0.0),
+    "WARDEN":     _c(1.0,  0.0,  0.5,  0.0,  0.3),
+    "ENCHANTER":  _c(1.0,  0.0,  0.5,  0.3,  0.0),
+    "CATCHER":    _c(0.3,  0.3,  0.5,  1.0,  0.0),
+    "ARTILLERY":  _c(0.0,  0.0,  1.0,  0.5,  0.0),
+    "BURST":      _c(0.3,  0.5,  0.3,  1.0,  0.0),
+    "BATTLEMAGE": _c(0.7,  0.7,  0.3,  0.0,  0.0),
+    "MARKSMAN":   _c(1.0,  0.3,  0.5,  0.0,  0.3),
+    "ASSASSIN":   _c(0.0,  0.7,  0.0,  1.0,  0.5),
+    "SKIRMISHER": _c(0.3,  0.3,  0.0,  0.0,  1.0),
+    "JUGGERNAUT": _c(0.5,  0.5,  0.0,  0.0,  0.5),
+    "DIVER":      _c(0.0,  1.0,  0.0,  0.5,  0.3),
+    "SPECIALIST": _c(0.3,  0.3,  0.3,  0.3,  0.3),
+}
+
+# Hybrid damping: a champion's subclass table values are multiplied by this,
+# keyed by how many subclasses it has. A pure Marksman (Jinx) is the real
+# f2b-hypercarry deal; an Assassin+Marksman+Specialist hybrid (Quinn) is a
+# jack-of-all-trades and shouldn't get full points anywhere. (The wiki's
+# subclass list is alphabetical — no primary/secondary ordering exists — so
+# damping is uniform per champion rather than per-position.)
+SUBCLASS_COUNT_DAMPING: dict[int, float] = {1: 1.0, 2: 0.7}
+SUBCLASS_COUNT_DAMPING_MIN = 0.5  # 3 or more subclasses
+
+# Subclasses that provide *initiation* — used by the "No engage" team warning.
+ENGAGE_SUBCLASSES: frozenset[str] = frozenset({"VANGUARD", "DIVER", "CATCHER"})
+
+# Subclasses whose kit protects a carry — used by the "No peel" team warning
+# (a high-utility pick of any subclass also counts; see team_comp_profile).
+PEEL_SUBCLASSES: frozenset[str] = frozenset({"WARDEN", "ENCHANTER"})

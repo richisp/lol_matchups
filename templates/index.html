@@ -1,6 +1,26 @@
 {% extends "base.html" %}
-{% block title %}Champion winrates — LoL Matchups{% endblock %}
+{% block title %}Champion attributes — LoL Matchups{% endblock %}
 {% block body %}
+
+    {# 0-3 attribute rating rendered as three dots. #}
+    {% macro dots(v) %}
+    {%- if v is none -%}
+    <span class="attr-none">—</span>
+    {%- else -%}
+    <span class="attr-dots" title="{{ v }}/3">{%- for i in range(3) -%}<span class="dot{% if i < v %} on{% endif %}"></span>{%- endfor -%}</span>
+    {%- endif -%}
+    {% endmacro %}
+
+    {# 0-1 comp fit; leading comp(s) for the champion are highlighted. #}
+    {% macro fit(c, comp) %}
+    {%- set v = c['fit_' ~ comp] -%}
+    {%- if v is none -%}
+    <span class="attr-none">—</span>
+    {%- else -%}
+    <span class="fit-val {% if comp in c.leading_comps %}fit-lead{% elif v >= 0.7 %}fit-hi{% elif v <= 0.3 %}fit-lo{% endif %}">{{ "%.2f"|format(v) }}</span>
+    {%- endif -%}
+    {% endmacro %}
+
     <div id="index-content">
     {% if error %}
         <p class="empty">{{ error }}</p>
@@ -35,42 +55,40 @@
     </p>
 
     {% if champions %}
-    <table class="sortable">
+    <table class="sortable attr-table">
         <thead>
             <tr>
-                <th data-sort="role" class="th-sort {% if sort_key == 'role' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Role</th>
-                <th data-sort="name" class="th-sort {% if sort_key == 'name' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Champion</th>
-                <th data-sort="winrate"    class="th-sort num {% if sort_key == 'winrate'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Winrate</th>
-                <th data-sort="pickrate"   class="th-sort num {% if sort_key == 'pickrate'   %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Pick rate</th>
-                <th data-sort="banrate"    class="th-sort num {% if sort_key == 'banrate'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Ban rate</th>
-                <th data-sort="games"      class="th-sort num {% if sort_key == 'games'      %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Games</th>
-                <th data-sort="roles"      class="th-sort num {% if sort_key == 'roles'      %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Number of roles this champion has records in">Roles</th>
-                <th data-sort="lane_share" class="th-sort num {% if sort_key == 'lane_share' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Share of this champion's total pick rate that comes from this lane (100% = only played here)">Lane share</th>
-                <th data-sort="blind_risk" class="th-sort num {% if sort_key == 'blind_risk' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Weighted exposure to popular bad matchups (lower = safer blind pick)">Blind risk</th>
+                <th data-sort="name"  class="th-sort {% if sort_key == 'name'  %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Champion</th>
+                <th data-sort="class" class="th-sort {% if sort_key == 'class' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Riot's subclass tags (LoL wiki); base classes are dropped. Multi-subclass hybrids get damped comp fits (1 subclass ×1.0, 2 ×0.7, 3+ ×0.5)">Subclass</th>
+                <th data-sort="damage"    class="th-sort num {% if sort_key == 'damage'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Damage rating (0–3)">Dmg</th>
+                <th data-sort="toughness" class="th-sort num {% if sort_key == 'toughness' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Toughness / tankiness rating (0–3)">Tough</th>
+                <th data-sort="control"   class="th-sort num {% if sort_key == 'control'   %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Crowd-control rating (0–3)">CC</th>
+                <th data-sort="mobility"  class="th-sort num {% if sort_key == 'mobility'  %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Mobility rating (0–3)">Mob</th>
+                <th data-sort="utility"   class="th-sort num {% if sort_key == 'utility'   %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Utility rating (0–3): shields, heals, buffs">Util</th>
+                {% for comp in team_comps %}
+                <th data-sort="{{ comp }}" class="th-sort num th-comp {% if sort_key == comp %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Fit (0–1) for the {{ comp_labels[comp] }} comp archetype — highlighted when it's this champion's best comp">{{ comp_labels[comp] }}</th>
+                {% endfor %}
             </tr>
         </thead>
         <tbody>
             {% for c in champions %}
             <tr>
-                <td class="role-cell">
-                    <img class="role-icon" src="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-static-assets/global/default/svg/position-{{ role_icon_slug(c.lane) }}.svg" alt="{{ c.lane }}" title="{{ c.lane }}">
-                </td>
                 <td class="champ">
-                    <a href="{{ url_for('champion_matchups', champion_name=c.champion_name, lane=c.lane, tier=tier) }}">
+                    <a href="{{ url_for('champion_matchups', champion_name=c.champion_name, tier=tier, lane=(lane if lane != lane_all else none)) }}">
                         <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champ_id(c.champion_name) }}.png"
                              alt="" loading="lazy" onerror="this.style.visibility='hidden'">
                     </a>
-                    <a href="{{ url_for('champion_matchups', champion_name=c.champion_name, lane=c.lane, tier=tier) }}">{{ c.champion_name }}</a>
+                    <a href="{{ url_for('champion_matchups', champion_name=c.champion_name, tier=tier, lane=(lane if lane != lane_all else none)) }}">{{ c.champion_name }}</a>
                 </td>
-                <td class="num winrate {% if c.winrate and c.winrate >= 52 %}good{% elif c.winrate and c.winrate <= 48 %}bad{% endif %}">
-                    {{ "%.2f"|format(c.winrate) ~ "%" if c.winrate is not none else '—' }}
-                </td>
-                <td class="num">{{ "%.2f"|format(c.pickrate) ~ "%" if c.pickrate is not none else '—' }}</td>
-                <td class="num">{{ "%.2f"|format(c.banrate) ~ "%" if c.banrate is not none else '—' }}</td>
-                <td class="num">{{ "{:,}".format(c.games) if c.games is not none else '—' }}</td>
-                <td class="num">{{ c.roles }}</td>
-                <td class="num winrate {% if c.lane_pr_share is not none and c.lane_pr_share > 90 %}bad{% elif c.lane_pr_share is not none and c.lane_pr_share < 50 %}good{% endif %}">{{ "%.0f"|format(c.lane_pr_share) ~ "%" if c.lane_pr_share is not none else '—' }}</td>
-                <td class="num">{{ "%.2f"|format(c.blind_risk) }}</td>
+                <td class="class-cell">{{ c.subclass_label or '—' }}</td>
+                <td class="num">{{ dots(c.damage) }}</td>
+                <td class="num">{{ dots(c.toughness) }}</td>
+                <td class="num">{{ dots(c.control) }}</td>
+                <td class="num">{{ dots(c.mobility) }}</td>
+                <td class="num">{{ dots(c.utility) }}</td>
+                {% for comp in team_comps %}
+                <td class="num">{{ fit(c, comp) }}</td>
+                {% endfor %}
             </tr>
             {% endfor %}
         </tbody>
@@ -125,20 +143,38 @@
         .th-sort.sorted-asc::after  { content: ' ▲'; color: #5b8def; font-size: 0.7em; }
         .th-sort.sorted-desc::after { content: ' ▼'; color: #5b8def; font-size: 0.7em; }
 
-        .role-cell { width: 28px; padding-right: 0.4rem; }
-        .role-icon {
-            width: 22px;
-            height: 22px;
-            display: block;
-            filter: invert(1) brightness(0.85);
+        /* Attribute/comp-fit table */
+        .attr-table td { padding-top: 0.4rem; padding-bottom: 0.4rem; }
+        .class-cell {
+            color: #8a9bc5;
+            font-size: 0.78rem;
+            max-width: 220px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
+        .attr-dots { display: inline-flex; gap: 3px; }
+        .attr-dots .dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #2a2a30;
+        }
+        .attr-dots .dot.on { background: #5b8def; }
+        .attr-none { color: #555; }
+        .th-comp { border-left: 1px solid #2a2a2e; }
+        .attr-table td:nth-child(8) { border-left: 1px solid #232328; }
+        .fit-val { font-variant-numeric: tabular-nums; color: #999; }
+        .fit-val.fit-hi { color: #e6e6e6; }
+        .fit-val.fit-lo { color: #555; }
+        .fit-val.fit-lead { color: #5b8def; font-weight: 600; }
     </style>
 
     <script>
         // AJAX-refresh the page in place instead of submitting the form (which
         // would full-reload and visibly repaint the nav + filter buttons).
         // Handlers are delegated on document so they survive the content swap.
-        const NATURAL_DESC = new Set(['winrate', 'pickrate', 'banrate', 'games', 'roles', 'lane_share']);
+        const NATURAL_DESC = new Set(['damage', 'toughness', 'control', 'mobility', 'utility',
+                                      'f2b', 'dive', 'poke', 'pick', 'split']);
         let inflight = null;
 
         async function refresh() {

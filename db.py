@@ -37,6 +37,23 @@ CREATE TABLE IF NOT EXISTS matchups (
 CREATE INDEX IF NOT EXISTS idx_matchups_focal     ON matchups(champion_name, champion_lane, tier);
 CREATE INDEX IF NOT EXISTS idx_matchups_type_lane ON matchups(matchup_type, champion_lane, opponent_lane, tier);
 
+-- Riot-authored champion attributes (fetch_attributes.py). One row per
+-- champion; no lane/tier dimension — these are champion-intrinsic.
+CREATE TABLE IF NOT EXISTS champion_attributes (
+    champion_name    TEXT PRIMARY KEY,  -- Data Dragon display name (matches champion_stats)
+    riot_id          TEXT,              -- Data Dragon id, e.g. 'MonkeyKing'
+    roles            TEXT,              -- comma-joined Riot class/subclass tags, e.g. 'FIGHTER,JUGGERNAUT,TANK'
+    damage           INTEGER,           -- attribute ratings, 0-3
+    toughness        INTEGER,
+    control          INTEGER,
+    mobility         INTEGER,
+    utility          INTEGER,
+    ability_reliance INTEGER,           -- 0-100; high = damage comes from spells, not autos
+    difficulty       INTEGER,
+    adaptive_type    TEXT,              -- 'PHYSICAL_DAMAGE' | 'MAGIC_DAMAGE'
+    fetched_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS scrape_runs (
     champion_name TEXT NOT NULL,
     lane          TEXT NOT NULL,
@@ -53,6 +70,13 @@ def init_db(path: Path) -> None:
     with sqlite3.connect(path) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(SCHEMA)
+        # Subtractive migration: CREATE IF NOT EXISTS won't shrink an existing
+        # table, so columns removed from the schema need explicit DROPs.
+        for col in ("attack_type", "attack_range"):
+            try:
+                conn.execute(f"ALTER TABLE champion_attributes DROP COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass  # already gone
 
 
 @contextmanager
@@ -191,6 +215,33 @@ def store_scrape_result(conn, data: dict) -> tuple[int, int]:
                 )
                 matchup_count += 1
     return matchup_count, bool(overall)
+
+
+def upsert_champion_attributes(conn, row: dict) -> None:
+    """`row` keys match the champion_attributes columns (minus fetched_at)."""
+    conn.execute(
+        """
+        INSERT INTO champion_attributes
+            (champion_name, riot_id, roles, damage, toughness, control, mobility,
+             utility, ability_reliance, difficulty, adaptive_type, fetched_at)
+        VALUES (:champion_name, :riot_id, :roles, :damage, :toughness, :control,
+                :mobility, :utility, :ability_reliance, :difficulty,
+                :adaptive_type, datetime('now'))
+        ON CONFLICT(champion_name) DO UPDATE SET
+            riot_id          = excluded.riot_id,
+            roles            = excluded.roles,
+            damage           = excluded.damage,
+            toughness        = excluded.toughness,
+            control          = excluded.control,
+            mobility         = excluded.mobility,
+            utility          = excluded.utility,
+            ability_reliance = excluded.ability_reliance,
+            difficulty       = excluded.difficulty,
+            adaptive_type    = excluded.adaptive_type,
+            fetched_at       = excluded.fetched_at
+        """,
+        row,
+    )
 
 
 def mark_scrape_run(conn, champion: str, lane: str, tier: str, status: str, note: str = "") -> None:

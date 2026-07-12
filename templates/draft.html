@@ -40,6 +40,28 @@
     </div>
     {% endmacro %}
 
+    {# Team comp profile: mean comp fit per archetype across the team's picks,
+       leading comp(s) highlighted, plus composition-gap warnings (3+ picks).
+       `profile` is None until a picked champ has attribute data. #}
+    {% macro comp_panel(profile) %}
+    {% if profile %}
+    <div class="comp-panel">
+        {% for comp in team_comps %}
+        <div class="comp-row {% if comp in profile.leading %}comp-leading{% endif %}">
+            <span class="comp-label">{{ comp_labels[comp] }}</span>
+            <span class="comp-bar"><span class="comp-bar-fill" style="width: {{ (profile.comps[comp] * 100)|round|int }}%"></span></span>
+            <span class="comp-val">{{ "%.2f"|format(profile.comps[comp]) }}</span>
+        </div>
+        {% endfor %}
+        {% if profile.warnings %}
+        <div class="comp-warnings">
+            {% for w in profile.warnings %}<span class="comp-warn">⚠ {{ w }}</span>{% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+    {% endmacro %}
+
     {# Average-score badge for a team header. `avg` is None when the team has no picks. #}
     {% macro team_avg_score(avg) %}
         {% if avg is not none %}
@@ -55,6 +77,9 @@
         <span class="bk-fit">Score <span class="winrate {% if c.fit >= 52 %}good{% elif c.fit <= 48 %}bad{% endif %}">{{ "%.2f"|format(c.fit) }}</span></span>
     </div>
     <div class="bk-base">WR {% if c.winrate is not none %}{{ "%.2f"|format(c.winrate) }}{% else %}—{% endif %} · {{ lane }} · {{ tier }}</div>
+    {% if c.subclass_label %}
+    <div class="bk-attrs" title="Riot's subclass tags · this champion's best-fitting team comps (0–1)">{{ c.subclass_label }}{% if c.comp_top %} — {{ c.comp_top }}{% endif %}</div>
+    {% endif %}
     {{ breakdown_section(c.counter_breakdown, 'opponent', c.counter_total, 'vs Enemies') }}
     {{ breakdown_section(c.synergy_breakdown, 'ally', c.synergy_total, 'w/ Allies') }}
     <div class="bk-risk" title="Weighted exposure to popular bad matchups in this lane (lower = safer blind pick)">
@@ -117,6 +142,7 @@
                     </div>
                     {% endfor %}
                 </div>
+                {{ comp_panel(my_comp_profile) }}
                 {% for pos in positions %}
                 <div class="slot {% if pos == active %}slot-active{% endif %}">
                     <button type="button" class="slot-pick" data-active="{{ pos }}"
@@ -161,6 +187,7 @@
                             <th data-sort="winrate" class="th-sort num {% if sort_key == 'winrate' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Champion's overall winrate in this lane × tier">WR</th>
                             <th data-sort="counter" class="th-sort num {% if sort_key == 'counter' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Sum of weighted counter-matchup deltas vs picked enemies">vs</th>
                             <th data-sort="synergy" class="th-sort num {% if sort_key == 'synergy' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Sum of weighted synergy deltas with picked teammates">w/</th>
+                            <th data-sort="comp"    class="th-sort num {% if sort_key == 'comp'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="This champion's fit (0–1) to the comp archetype your picked allies are leaning toward. Empty until an ally is picked.">Comp</th>
                             <th data-sort="risk"    class="th-sort num {% if sort_key == 'risk'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Weighted exposure to popular bad matchups in this lane × tier (lower = safer blind pick)">Risk</th>
                             <th data-sort="roles"   class="th-sort num {% if sort_key == 'roles'   %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Number of roles this champion has records in">Roles</th>
                             <th data-sort="lane_share" class="th-sort num {% if sort_key == 'lane_share' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Share of this champion's total pick rate that comes from this lane (100% = only played here)">Lane%</th>
@@ -186,6 +213,9 @@
                             </td>
                             <td class="num {% if c.synergy_total > 1 %}good{% elif c.synergy_total < -1 %}bad{% endif %}">
                                 {% if c.synergy_total >= 0 %}+{% endif %}{{ "%.2f"|format(c.synergy_total) }}
+                            </td>
+                            <td class="num {% if c.comp_align is not none and c.comp_align >= 0.6 %}good{% endif %}">
+                                {% if c.comp_align is not none %}{{ "%.2f"|format(c.comp_align) }}{% else %}—{% endif %}
                             </td>
                             <td class="num {% if c.blind_risk < 5 %}good{% elif c.blind_risk > 10 %}bad{% endif %}">
                                 {{ "%.2f"|format(c.blind_risk) }}
@@ -217,6 +247,7 @@
                     </div>
                     {% endfor %}
                 </div>
+                {{ comp_panel(enemy_comp_profile) }}
                 {% for pos in positions %}
                 <div class="slot enemy-slot" data-lane="{{ pos }}">
                     <div class="slot-row">

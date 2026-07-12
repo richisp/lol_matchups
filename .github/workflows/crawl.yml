@@ -100,6 +100,12 @@ jobs:
           HEADLESS: '1'
         run: python crawl_champions.py
 
+      - name: Fetch champion attributes (Data Dragon + Meraki)
+        # Upsert-only into champion_attributes; a flaky fetch just leaves the
+        # previous rows in place, so it must never block the DB upload.
+        continue-on-error: true
+        run: python fetch_attributes.py
+
       - name: Generate version metadata + release body
         run: python .github/scripts/db_version.py
 

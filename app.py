@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import sys
 
 import httpx
@@ -37,22 +38,25 @@ def _no_cache(response):
 POSITIONS = list(config.POSITIONS)
 
 LANE_ALL = "ALL"
-LANE_SORT_ORDER = {"TOP": 0, "JUNGLE": 1, "MID": 2, "BOT": 3, "SUPPORT": 4}
 
-# Maps URL sort key → (db column, default-descending). The URL accepts a
-# leading "-" to flip direction (e.g. "-name" sorts name descending).
+# Maps URL sort key → (row key, default-descending) for the champion index
+# (attributes + comp fits view). The URL accepts a leading "-" to flip
+# direction (e.g. "-name" sorts name descending).
 CHAMPION_SORT_KEYS: dict[str, tuple[str, bool]] = {
-    "winrate":     ("winrate", True),
-    "pickrate":    ("pickrate", True),
-    "banrate":     ("banrate", True),
-    "games":       ("games", True),
-    "roles":       ("roles", True),
-    "lane_share":  ("lane_pr_share", True),
-    "blind_risk":  ("blind_risk", False),
-    "name":        ("champion_name", False),
-    "role":        ("lane", False),
+    "name":      ("champion_name", False),
+    "class":     ("subclass_label", False),
+    "damage":    ("damage", True),
+    "toughness": ("toughness", True),
+    "control":   ("control", True),
+    "mobility":  ("mobility", True),
+    "utility":   ("utility", True),
+    "f2b":       ("fit_f2b", True),
+    "dive":      ("fit_dive", True),
+    "poke":      ("fit_poke", True),
+    "pick":      ("fit_pick", True),
+    "split":     ("fit_split", True),
 }
-DEFAULT_SORT = "winrate"  # canonical default; rendered as "winrate" (descending via natural default)
+DEFAULT_SORT = "name"
 
 # Same shape, but for the draft recs table. Column names map to candidate-dict
 # keys (compute_draft_scores's output, not raw DB columns).
@@ -65,6 +69,7 @@ DRAFT_SORT_KEYS: dict[str, tuple[str, bool]] = {
     "risk":    ("blind_risk", False),
     "roles":   ("roles", True),
     "lane_share": ("lane_pr_share", True),
+    "comp":    ("comp_align", True),
 }
 DRAFT_DEFAULT_SORT = "fit"
 
@@ -225,6 +230,139 @@ def compute_blind_risk(
     return {name: v / 2.0 for name, v in scores.items()}
 
 
+# ---------------------------------------------------------------------------
+# Team-comp classification. Champion attributes (Riot's class/subclass tags +
+# 0-3 attribute ratings, fetched by fetch_attributes.py) are turned into a
+# soft 0-1 fit per comp archetype (config.TEAM_COMPS). Display-only for now —
+# comp fits do NOT feed the fit score.
+
+def compute_comp_fits(a: dict) -> dict[str, float]:
+    """Comp fits for one champion_attributes row (expects a['subclasses'],
+    the roles filtered to SUBCLASS_COMP_FIT tags). Base = max over the
+    champ's subclasses, damped by how many it has — a single-subclass
+    specialist gets the table at full strength, hybrids are diluted
+    (see config.SUBCLASS_COUNT_DAMPING). Then small attribute nudges,
+    clamped 0-1."""
+    subs = a["subclasses"]
+    damping = config.SUBCLASS_COUNT_DAMPING.get(
+        len(subs), config.SUBCLASS_COUNT_DAMPING_MIN)
+    fits = {
+        comp: damping * max(
+            (config.SUBCLASS_COMP_FIT[r][comp] for r in subs),
+            default=0.0,
+        )
+        for comp in config.TEAM_COMPS
+    }
+    mobility = a["mobility"] or 0
+    control = a["control"] or 0
+    # Nudges: mobility+CC helps reach/lock the backline (dive), mobility is
+    # the split-pusher's escape, CC is what converts a catch (pick).
+    fits["dive"] += 0.05 * mobility + 0.05 * control
+    fits["pick"] += 0.05 * control
+    fits["split"] += 0.10 * mobility
+    return {c: min(1.0, max(0.0, v)) for c, v in fits.items()}
+
+
+_champion_attrs_cache: dict[str, dict] | None = None
+
+
+def get_champion_attributes(conn) -> dict[str, dict]:
+    """champion_name -> attributes row (+ derived comp_fits / display strings).
+    Cached for the process lifetime, like available tiers. Returns {} when the
+    table is missing (DB snapshot from before attributes existed)."""
+    global _champion_attrs_cache
+    if _champion_attrs_cache is None:
+        try:
+            rows = conn.execute("SELECT * FROM champion_attributes").fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        attrs: dict[str, dict] = {}
+        for r in rows:
+            a = dict(r)
+            a["roles"] = [x for x in (a["roles"] or "").split(",") if x]
+            # Base classes (FIGHTER/MAGE/TANK/SUPPORT) are dropped everywhere
+            # — subclasses are strictly more accurate, and the hybrid damping
+            # in compute_comp_fits keys off the *subclass* count.
+            a["subclasses"] = [x for x in a["roles"] if x in config.SUBCLASS_COMP_FIT]
+            a["comp_fits"] = compute_comp_fits(a)
+            a["subclass_label"] = " · ".join(x.capitalize() for x in a["subclasses"])
+            top = sorted(a["comp_fits"].items(), key=lambda kv: kv[1], reverse=True)
+            a["comp_top"] = " · ".join(
+                f"{config.COMP_LABELS[c]} {v:.1f}" for c, v in top[:2] if v >= 0.4
+            )
+            attrs[a["champion_name"]] = a
+        if not attrs:
+            # Don't cache an empty table — if it gets populated later (e.g. a
+            # manual fetch_attributes.py run after a failed startup fetch),
+            # the next request picks it up without an app restart.
+            return {}
+        _champion_attrs_cache = attrs
+    return _champion_attrs_cache
+
+
+def team_comp_profile(team: dict[str, str], attrs: dict[str, dict]) -> dict | None:
+    """Aggregate a team's picks into a comp profile: mean comp fit per
+    archetype (0-1), the leading comp(s), and composition warnings. None when
+    no picked champion has attribute data."""
+    picked = [attrs[name] for name in team.values() if name in attrs]
+    if not picked:
+        return None
+    n = len(picked)
+    comps = {
+        c: sum(a["comp_fits"][c] for a in picked) / n
+        for c in config.TEAM_COMPS
+    }
+    best = max(comps.values())
+    leading = [c for c, v in comps.items() if best > 0 and v >= best - 0.05]
+
+    # Composition warnings — heuristic gaps that matter regardless of which
+    # comp the team is drafting toward. Only from 3 picks up: earlier, "missing
+    # X" is noise since two more picks can still fill any gap.
+    warnings: list[str] = []
+    if n >= 3:
+        if not any((a["toughness"] or 0) >= 3 for a in picked):
+            warnings.append("No frontline")
+        if not any(set(a["subclasses"]) & config.ENGAGE_SUBCLASSES for a in picked):
+            warnings.append("No engage")
+        if sum(a["control"] or 0 for a in picked) / n < 1.4:
+            warnings.append("Low CC")
+        # A marksman hypercarry with nobody whose kit can protect it — no
+        # Warden/Enchanter and no high-utility pick of any other subclass.
+        if any("MARKSMAN" in a["subclasses"] for a in picked) and not any(
+            set(a["subclasses"]) & config.PEEL_SUBCLASSES
+            or (a["utility"] or 0) >= 2
+            for a in picked
+        ):
+            warnings.append("No peel")
+        # Nobody hits damage 3: unkillable comps still need a kill threat.
+        if not any((a["damage"] or 0) >= 3 for a in picked):
+            warnings.append("Low damage")
+        # Damage profile: judge only the actual damage dealers (rating >= 2).
+        dealers = {a["adaptive_type"] for a in picked if (a["damage"] or 0) >= 2}
+        if len(dealers) == 1:
+            only = dealers.pop()
+            if only == "PHYSICAL_DAMAGE":
+                warnings.append("All AD")
+            elif only == "MAGIC_DAMAGE":
+                warnings.append("All AP")
+    return {"comps": comps, "count": n, "leading": leading, "warnings": warnings}
+
+
+def comp_alignment(cand_fits: dict[str, float], profile: dict | None) -> float | None:
+    """How well a candidate reinforces the comp direction `profile`'s team is
+    already drafting toward: mean of the candidate's fit over the team's
+    *leading* comp(s). 0-1; None without team context.
+
+    Deliberately NOT a dot product over all five comps — that's a weighted
+    average, so a flat-high generalist (the wiki tags most mobile marksmen
+    ASSASSIN+MARKSMAN, giving them ~1.0 in four comps via max()) would top the
+    list for every team. Scoring only the leading comp(s) makes the ranking
+    actually change with the team's direction."""
+    if not profile or not profile.get("leading"):
+        return None
+    return sum(cand_fits[c] for c in profile["leading"]) / len(profile["leading"])
+
+
 def parse_sort(
     sort_param: str,
     sort_keys: dict[str, tuple[str, bool]] = CHAMPION_SORT_KEYS,
@@ -291,51 +429,57 @@ def get_champion_lanes(conn, champion_name: str, tier: str) -> list[str]:
     return [p for p in POSITIONS if p in have]
 
 
+_ATTR_LIST_KEYS = ("subclass_label", "damage", "toughness", "control",
+                   "mobility", "utility", "comp_top")
+
+
 def get_champion_list(lane: str, tier: str, sort_param: str):
+    """Champion index rows: one per champion (attributes are champion-
+    intrinsic, no lane/tier dimension). `lane` filters to champions with
+    champion_stats records there; ALL also includes attribute-only champs.
+    Champions without attribute data (brand-new releases) render as dashes
+    and sort last."""
     with db.connect(config.DB_PATH) as conn:
+        attrs = get_champion_attributes(conn)
         if lane == LANE_ALL:
-            rows = conn.execute(
-                """
-                SELECT champion_name, lane, tier, winrate, pickrate, banrate, games, tier_badge
-                  FROM champion_stats
-                 WHERE tier = ?
-                """,
+            names = {r["champion_name"] for r in conn.execute(
+                "SELECT DISTINCT champion_name FROM champion_stats WHERE tier = ?",
                 (tier,),
-            ).fetchall()
-            risk_by_lane = {l: compute_blind_risk(conn, l, tier) for l in POSITIONS}
+            )} | set(attrs)
         else:
-            rows = conn.execute(
-                """
-                SELECT champion_name, lane, tier, winrate, pickrate, banrate, games, tier_badge
-                  FROM champion_stats
-                 WHERE lane = ? AND tier = ?
-                """,
+            names = {r["champion_name"] for r in conn.execute(
+                "SELECT DISTINCT champion_name FROM champion_stats WHERE lane = ? AND tier = ?",
                 (lane, tier),
-            ).fetchall()
-            risk_by_lane = {lane: compute_blind_risk(conn, lane, tier)}
-        role_counts = get_role_counts(conn, tier)
-        total_pr = get_total_pickrate(conn, tier)
+            )}
 
-    out = [dict(r) for r in rows]
-    for d in out:
-        d["blind_risk"] = risk_by_lane.get(d["lane"], {}).get(d["champion_name"], 0.0)
-        d["roles"] = role_counts.get(d["champion_name"], 0)
-        d["lane_pr_share"] = lane_pr_share(d["pickrate"], total_pr.get(d["champion_name"]))
+    out = []
+    for name in names:
+        a = attrs.get(name)
+        row = {"champion_name": name}
+        if a:
+            row.update({k: a[k] for k in _ATTR_LIST_KEYS})
+            for comp in config.TEAM_COMPS:
+                row[f"fit_{comp}"] = a["comp_fits"][comp]
+            row["leading_comps"] = {
+                c for c, v in a["comp_fits"].items()
+                if v >= max(a["comp_fits"].values()) - 0.05
+            }
+        else:
+            row.update(dict.fromkeys(_ATTR_LIST_KEYS))
+            row.update({f"fit_{comp}": None for comp in config.TEAM_COMPS})
+            row["leading_comps"] = set()
+        out.append(row)
 
-    _, db_col, desc = parse_sort(sort_param)
-    if db_col == "champion_name":
-        out.sort(key=lambda r: (r[db_col] or "").lower(), reverse=desc)
-    elif db_col == "lane":
-        # Sort by canonical lane order, with winrate desc as a stable secondary.
-        out.sort(key=lambda r: (
-            -(r["winrate"] or 0),
-        ), reverse=False)
-        out.sort(
-            key=lambda r: LANE_SORT_ORDER.get(r["lane"], 99),
-            reverse=desc,
-        )
+    _, col, desc = parse_sort(sort_param)
+    # Alphabetical first, then the (stable) primary sort — ties inside equal
+    # primary values stay alphabetical.
+    out.sort(key=lambda r: r["champion_name"].lower())
+    if col in ("champion_name", "subclass_label"):
+        # None-flag flips with direction so no-data rows sort last either way.
+        out.sort(key=lambda r: ((r[col] is None) != desc, (r[col] or "").lower()),
+                 reverse=desc)
     else:
-        out.sort(key=lambda r: (r[db_col] is None, r[db_col] or 0), reverse=desc)
+        out.sort(key=lambda r: ((r[col] is None) != desc, r[col] or 0), reverse=desc)
     return out
 
 
@@ -445,6 +589,8 @@ def index():
         sort_key=sort_key,
         sort_desc=sort_desc,
         champions=champions,
+        comp_labels=config.COMP_LABELS,
+        team_comps=config.TEAM_COMPS,
         dd_version=get_dd_version(),
     )
 
@@ -831,9 +977,17 @@ def draft():
         )
         role_counts = get_role_counts(conn, tier)
         total_pr = get_total_pickrate(conn, tier)
+        attrs = get_champion_attributes(conn)
+        # Comp alignment for the rec column is scored against the *allies
+        # already picked* (active slot excluded — that's the one being filled).
+        align_profile = team_comp_profile(my_team_for_scoring, attrs)
         for c in candidates:
             c["roles"] = role_counts.get(c["champion_name"], 0)
             c["lane_pr_share"] = lane_pr_share(c.get("pickrate"), total_pr.get(c["champion_name"]))
+            a = attrs.get(c["champion_name"])
+            c["comp_align"] = comp_alignment(a["comp_fits"], align_profile) if a else None
+            c["subclass_label"] = a["subclass_label"] if a else None
+            c["comp_top"] = a["comp_top"] if a else None
         # All champion display names (for the autocomplete datalist).
         champ_names = sorted({
             r["champion_name"] for r in conn.execute(
@@ -864,6 +1018,16 @@ def draft():
     my_avg_score = team_avg_score(my_pick_breakdowns)
     enemy_avg_score = team_avg_score(enemy_pick_breakdowns)
 
+    # Comp panels (per team, full picks including the active slot) + the
+    # attribute line in every picked champion's hover tooltip.
+    my_comp_profile = team_comp_profile(my_team, attrs)
+    enemy_comp_profile = team_comp_profile(enemy_team, attrs)
+    for breakdowns in (my_pick_breakdowns, enemy_pick_breakdowns):
+        for bk in breakdowns.values():
+            a = attrs.get(bk["champion_name"])
+            bk["subclass_label"] = a["subclass_label"] if a else None
+            bk["comp_top"] = a["comp_top"] if a else None
+
     # How each other picked champ moves *your* (active-slot) pick's score, so
     # the board can show — next to every other champ — the same contribution
     # the hover tooltip lists. Keyed by the other champ's lane. Both maps are
@@ -885,8 +1049,10 @@ def draft():
     if sort_col == "champion_name":
         candidates.sort(key=lambda c: (c[sort_col] or "").lower(), reverse=sort_desc)
     else:
+        # No-data rows must sort last in BOTH directions: the None flag has to
+        # flip with sort_desc, since reverse=True would otherwise put it first.
         candidates.sort(
-            key=lambda c: (c[sort_col] is None, c[sort_col] or 0),
+            key=lambda c: ((c[sort_col] is None) != sort_desc, c[sort_col] or 0),
             reverse=sort_desc,
         )
     # Always signed — see comment in `index()` route.
@@ -902,6 +1068,10 @@ def draft():
         enemy_team=enemy_team,
         my_avg_score=my_avg_score,
         enemy_avg_score=enemy_avg_score,
+        my_comp_profile=my_comp_profile,
+        enemy_comp_profile=enemy_comp_profile,
+        comp_labels=config.COMP_LABELS,
+        team_comps=config.TEAM_COMPS,
         my_pick_breakdowns=my_pick_breakdowns,
         enemy_pick_breakdowns=enemy_pick_breakdowns,
         active_champ=active_champ,

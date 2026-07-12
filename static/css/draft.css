@@ -328,6 +328,77 @@
             transparent calc(50% + 1px));
 }
 
+/* Team comp profile panel: five label+bar rows under each team's ban row,
+   leading comp(s) highlighted, warning chips below. */
+.comp-panel {
+    background: #18181b;
+    border: 1px solid #2a2a2e;
+    border-radius: 6px;
+    padding: 0.5rem 0.6rem;
+    margin-bottom: 0.6rem;
+}
+.comp-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.12rem 0;
+}
+.comp-label {
+    flex: 0 0 84px;
+    font-size: 0.68rem;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    font-weight: 600;
+}
+.comp-leading .comp-label { color: #e6e6e6; }
+.comp-bar {
+    flex: 1;
+    height: 6px;
+    background: #232328;
+    border-radius: 3px;
+    overflow: hidden;
+}
+.comp-bar-fill {
+    display: block;
+    height: 100%;
+    background: #3a3a44;
+    border-radius: 3px;
+}
+.comp-leading .comp-bar-fill { background: #5b8def; }
+.team-enemy .comp-leading .comp-bar-fill { background: #e85a5a; }
+.comp-val {
+    flex: 0 0 30px;
+    text-align: right;
+    font-size: 0.72rem;
+    color: #777;
+    font-variant-numeric: tabular-nums;
+}
+.comp-leading .comp-val { color: #e6e6e6; }
+.comp-warnings {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-top: 0.4rem;
+    padding-top: 0.4rem;
+    border-top: 1px solid #2a2a2e;
+}
+.comp-warn {
+    font-size: 0.68rem;
+    color: #e8b45a;
+    background: #2e2718;
+    border: 1px solid #4a3d20;
+    border-radius: 999px;
+    padding: 0.12rem 0.5rem;
+}
+
+/* Class/subclass tags + top comp fits line in the hover tooltip. */
+.bk-attrs {
+    color: #8a9bc5;
+    font-size: 0.72rem;
+    margin: -0.35rem 0 0.55rem;
+}
+
 .lcu-badge {
     display: inline-block;
     padding: 0.3rem 0.7rem;
