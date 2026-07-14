@@ -2,9 +2,9 @@
 .draft-layout {
     display: flex;
     flex-direction: column;
-    /* fill remaining viewport height below the body's top padding +
-       nav. Approximate; tolerant of small mismatches. */
-    height: calc(100vh - 5rem);
+    /* fill remaining viewport height below the body padding (the top nav
+       was removed to reclaim vertical space for the team columns). */
+    height: calc(100vh - 3.25rem);
     min-height: 480px;
 }
 
@@ -25,8 +25,8 @@
     background: #18181b;
     border: 1px solid #2a2a2e;
     border-radius: 8px;
-    padding: 0.55rem 0.9rem;
-    margin-bottom: 1.25rem;
+    padding: 0.45rem 0.9rem;
+    margin-bottom: 0.75rem;
 }
 /* Override base.html's "label { display: flex; flex-direction: column }". */
 .toolbar-field, .toolbar-toggle {
@@ -130,22 +130,28 @@
     border: 1px solid #2a2a2e;
     border-radius: 8px;
     padding: 0;
-    margin-bottom: 0.6rem;
+    margin-bottom: 0.45rem;
     overflow: hidden;
     transition: border-color 0.15s, box-shadow 0.15s;
 }
-.team-mine .slot:hover { border-color: #34343a; }
+.team-mine .slot:hover, .team-enemy .slot:hover { border-color: #34343a; }
 .slot-active {
     border-color: #5b8def;
     box-shadow: 0 0 0 1px #5b8def, 0 0 14px -4px rgba(91, 141, 239, 0.55);
 }
+/* Enemy-side active slot (scout mode) glows red instead of blue. */
+.team-enemy .slot-active {
+    border-color: #e85a5a;
+    box-shadow: 0 0 0 1px #e85a5a, 0 0 14px -4px rgba(232, 90, 90, 0.55);
+}
+.team-enemy .slot-active .slot-pick { color: #e85a5a; font-weight: 600; }
 .slot-pick {
     width: 100%;
     text-align: left;
     background: transparent;
     color: #555;
     border: none;
-    padding: 0.5rem 0.75rem 0.15rem;
+    padding: 0.35rem 0.75rem 0.1rem;
     cursor: pointer;
     font-family: inherit;
     font-size: 0.68rem;
@@ -159,18 +165,19 @@
     display: flex;
     align-items: center;
     gap: 0.7rem;
-    padding: 0.4rem 0.75rem 0.6rem;
+    padding: 0.3rem 0.75rem 0.45rem;
 }
-.team-enemy .slot-row { padding: 0.7rem 0.75rem; }
+/* Enemy slots have the same .slot-pick strip as my team, so rows match. */
+.team-enemy .slot-row { padding: 0.3rem 0.75rem 0.45rem; }
 .slot-icon {
-    width: 52px;
-    height: 52px;
-    flex: 0 0 52px;
+    width: 44px;
+    height: 44px;
+    flex: 0 0 44px;
     background: #232328;
     border-radius: 6px;
     overflow: hidden;
 }
-.slot-icon img { width: 52px; height: 52px; display: block; }
+.slot-icon img { width: 44px; height: 44px; display: block; }
 
 /* Enemy lane swapping: drag a champion portrait onto another enemy slot.
    The wrapper div is the drag source (not the <img>) — dragging an image
@@ -244,6 +251,52 @@
     flex-direction: column;
     min-height: 0;
 }
+/* Winrates / Attributes tabs in place of the old "Recommendations" header. */
+.recs-tabs {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.6rem;
+}
+.recs-tab {
+    background: #18181b;
+    border: 1px solid #2a2a2e;
+    border-radius: 6px;
+    color: #aaa;
+    padding: 0.35rem 0.8rem;
+    font-family: inherit;
+    font-size: 0.74rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    cursor: pointer;
+    transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.recs-tab:hover { border-color: #5b8def; color: #e6e6e6; }
+.recs-tab.active { background: #2a3a55; border-color: #5b8def; color: #e6e6e6; }
+
+/* Attributes tab cells (mirrors the champion index styling). */
+.class-cell {
+    color: #8a9bc5;
+    font-size: 0.76rem;
+    max-width: 180px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.attr-dots { display: inline-flex; gap: 3px; }
+.attr-dots .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #2a2a30;
+}
+.attr-dots .dot.on { background: #5b8def; }
+.attr-none { color: #555; }
+.recs-table th.th-comp { border-left: 1px solid #2a2a2e; }
+.fit-val { font-variant-numeric: tabular-nums; color: #999; }
+.fit-val.fit-hi { color: #e6e6e6; }
+.fit-val.fit-lo { color: #555; }
+.fit-val.fit-lead { color: #5b8def; font-weight: 600; }
 .recs-scroll {
     flex: 1;
     min-height: 0;
@@ -288,14 +341,14 @@
 .team-bans {
     display: flex;
     gap: 0.4rem;
-    margin-bottom: 0.6rem;
-    padding: 0.45rem 0.5rem;
+    margin-bottom: 0.5rem;
+    padding: 0.35rem 0.45rem;
     background: #18181b;
     border: 1px solid #2a2a2e;
     border-radius: 6px;
 }
 .ban-slot {
-    width: 32px; height: 32px;
+    width: 28px; height: 28px;
     border-radius: 4px;
     background: #232328;
     border: 1px dashed #34343a;
@@ -310,7 +363,7 @@
     border-color: #3a2222;
 }
 .ban-slot img {
-    width: 32px; height: 32px;
+    width: 28px; height: 28px;
     display: block;
     filter: grayscale(0.7) brightness(0.75);
 }
@@ -334,18 +387,18 @@
     background: #18181b;
     border: 1px solid #2a2a2e;
     border-radius: 6px;
-    padding: 0.5rem 0.6rem;
-    margin-bottom: 0.6rem;
+    padding: 0.4rem 0.55rem;
+    margin-bottom: 0.5rem;
 }
 .comp-row {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.12rem 0;
+    padding: 0.06rem 0;
 }
 .comp-label {
     flex: 0 0 84px;
-    font-size: 0.68rem;
+    font-size: 0.64rem;
     color: #888;
     text-transform: uppercase;
     letter-spacing: 0.6px;
@@ -375,22 +428,31 @@
     font-variant-numeric: tabular-nums;
 }
 .comp-leading .comp-val { color: #e6e6e6; }
-.comp-warnings {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
+/* Manually selected target comp (toolbar Comp picker) — amber, distinct from
+   the blue/red "leading" highlight so target vs actual reads at a glance. */
+.comp-target .comp-label { color: #e8b45a; }
+.comp-target .comp-val { color: #e8b45a; }
+.comp-target .comp-bar-fill,
+.team-enemy .comp-target .comp-bar-fill { background: #e8b45a; }
+/* Team attribute bars under the comp rows: always visible, red = the old
+   warning condition is active (only armed from 3 picks up). */
+.team-attr-rows {
     margin-top: 0.4rem;
     padding-top: 0.4rem;
     border-top: 1px solid #2a2a2e;
 }
-.comp-warn {
-    font-size: 0.68rem;
-    color: #e8b45a;
-    background: #2e2718;
-    border: 1px solid #4a3d20;
-    border-radius: 999px;
-    padding: 0.12rem 0.5rem;
-}
+.attr-row .comp-bar-fill,
+.team-enemy .attr-row .comp-bar-fill { background: #4c7a52; }
+.attr-row.attr-warn .comp-label,
+.attr-row.attr-warn .comp-val { color: #e85a5a; }
+.attr-row.attr-warn .comp-bar-fill,
+.team-enemy .attr-row.attr-warn .comp-bar-fill { background: #e85a5a; }
+/* AD/AP split bar: AD (orange) first, then AP (cyan). */
+.split-bar { display: flex; }
+.split-ad, .split-ap { display: block; height: 100%; }
+.split-ad { background: #e8823a; }
+.split-ap { background: #3ac9e8; }
+.attr-row.attr-warn .split-ad, .attr-row.attr-warn .split-ap { background: #e85a5a; }
 
 /* Class/subclass tags + top comp fits line in the hover tooltip. */
 .bk-attrs {

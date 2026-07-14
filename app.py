@@ -59,7 +59,8 @@ CHAMPION_SORT_KEYS: dict[str, tuple[str, bool]] = {
 DEFAULT_SORT = "name"
 
 # Same shape, but for the draft recs table. Column names map to candidate-dict
-# keys (compute_draft_scores's output, not raw DB columns).
+# keys (compute_draft_scores's output, not raw DB columns). The second block
+# serves the Attributes tab, which shares the same signed sort param.
 DRAFT_SORT_KEYS: dict[str, tuple[str, bool]] = {
     "name":    ("champion_name", False),
     "fit":     ("fit", True),
@@ -70,6 +71,17 @@ DRAFT_SORT_KEYS: dict[str, tuple[str, bool]] = {
     "roles":   ("roles", True),
     "lane_share": ("lane_pr_share", True),
     "comp":    ("comp_align", True),
+    "class":     ("subclass_label", False),
+    "damage":    ("damage", True),
+    "toughness": ("toughness", True),
+    "control":   ("control", True),
+    "mobility":  ("mobility", True),
+    "utility":   ("utility", True),
+    "f2b":       ("fit_f2b", True),
+    "dive":      ("fit_dive", True),
+    "poke":      ("fit_poke", True),
+    "pick":      ("fit_pick", True),
+    "split":     ("fit_split", True),
 }
 DRAFT_DEFAULT_SORT = "fit"
 
@@ -300,52 +312,72 @@ def get_champion_attributes(conn) -> dict[str, dict]:
     return _champion_attrs_cache
 
 
-def team_comp_profile(team: dict[str, str], attrs: dict[str, dict]) -> dict | None:
+def team_comp_profile(team: dict[str, str], attrs: dict[str, dict]) -> dict:
     """Aggregate a team's picks into a comp profile: mean comp fit per
-    archetype (0-1), the leading comp(s), and composition warnings. None when
-    no picked champion has attribute data."""
+    archetype (0-1), the leading comp(s), and the team attribute bars.
+    With no attributed picks yet, returns a zeroed profile (bars at 0,
+    values dashed) so the panels are always visible."""
     picked = [attrs[name] for name in team.values() if name in attrs]
-    if not picked:
-        return None
     n = len(picked)
     comps = {
-        c: sum(a["comp_fits"][c] for a in picked) / n
+        c: (sum(a["comp_fits"][c] for a in picked) / n if n else 0.0)
         for c in config.TEAM_COMPS
     }
     best = max(comps.values())
     leading = [c for c, v in comps.items() if best > 0 and v >= best - 0.05]
 
-    # Composition warnings — heuristic gaps that matter regardless of which
-    # comp the team is drafting toward. Only from 3 picks up: earlier, "missing
-    # X" is noise since two more picks can still fill any gap.
-    warnings: list[str] = []
-    if n >= 3:
-        if not any((a["toughness"] or 0) >= 3 for a in picked):
-            warnings.append("No frontline")
-        if not any(set(a["subclasses"]) & config.ENGAGE_SUBCLASSES for a in picked):
-            warnings.append("No engage")
-        if sum(a["control"] or 0 for a in picked) / n < 1.4:
-            warnings.append("Low CC")
-        # A marksman hypercarry with nobody whose kit can protect it — no
-        # Warden/Enchanter and no high-utility pick of any other subclass.
-        if any("MARKSMAN" in a["subclasses"] for a in picked) and not any(
-            set(a["subclasses"]) & config.PEEL_SUBCLASSES
-            or (a["utility"] or 0) >= 2
-            for a in picked
-        ):
-            warnings.append("No peel")
-        # Nobody hits damage 3: unkillable comps still need a kill threat.
-        if not any((a["damage"] or 0) >= 3 for a in picked):
-            warnings.append("Low damage")
-        # Damage profile: judge only the actual damage dealers (rating >= 2).
-        dealers = {a["adaptive_type"] for a in picked if (a["damage"] or 0) >= 2}
-        if len(dealers) == 1:
-            only = dealers.pop()
-            if only == "PHYSICAL_DAMAGE":
-                warnings.append("All AD")
-            elif only == "MAGIC_DAMAGE":
-                warnings.append("All AP")
-    return {"comps": comps, "count": n, "leading": leading, "warnings": warnings}
+    # Team attribute bars — the composition-gap dimensions rendered as
+    # always-visible progress bars (not chips that only appear when broken).
+    # `warn` turns a bar red; armed only from 3 picks up, since earlier two
+    # more picks can still fill any gap.
+    armed = n >= 3
+
+    def avg(key: str) -> float:
+        return sum((a[key] or 0) for a in picked) / n if n else 0.0
+
+    def rating(key: str) -> str:
+        return f"{avg(key):.1f}" if n else "—"
+
+    engage_n = sum(
+        1 for a in picked if set(a["subclasses"]) & config.ENGAGE_SUBCLASSES)
+    # Peel = a kit that protects the carry: Warden/Enchanter, or high utility.
+    peel_n = sum(
+        1 for a in picked
+        if set(a["subclasses"]) & config.PEEL_SUBCLASSES
+        or (a["utility"] or 0) >= 2
+    )
+    has_marksman = any("MARKSMAN" in a["subclasses"] for a in picked)
+    bars = [
+        {"label": "Damage", "fill": avg("damage") / 3, "value": rating("damage"),
+         "hint": "Average damage rating (0–3). Red: nobody hits damage 3 — no kill threat.",
+         "warn": armed and not any((a["damage"] or 0) >= 3 for a in picked)},
+        {"label": "Frontline", "fill": avg("toughness") / 3, "value": rating("toughness"),
+         "hint": "Average toughness (0–3). Red: no toughness-3 pick — nobody to soak.",
+         "warn": armed and not any((a["toughness"] or 0) >= 3 for a in picked)},
+        {"label": "CC", "fill": avg("control") / 3, "value": rating("control"),
+         "hint": "Average crowd control (0–3). Red: team average below 1.4.",
+         "warn": armed and avg("control") < 1.4},
+        {"label": "Engage", "fill": min(engage_n, 2) / 2, "value": str(engage_n) if n else "—",
+         "hint": "Picks that can start a fight (Vanguard/Diver/Catcher). Red: none.",
+         "warn": armed and engage_n == 0},
+        {"label": "Peel", "fill": min(peel_n, 2) / 2, "value": str(peel_n) if n else "—",
+         "hint": "Picks that protect a carry (Warden/Enchanter or utility ≥ 2). "
+                 "Red: you have a marksman and nobody to peel for it.",
+         "warn": armed and has_marksman and peel_n == 0},
+    ]
+    # Damage profile over the actual dealers (damage rating >= 2). Always
+    # present so the AD/AP row renders (empty bar) before any dealer is picked.
+    # A healthy comp wants at least 2 dealers of EACH type — 0 or 1 of either
+    # side means the enemy can stack one resistance and blunt most of your
+    # damage, so the row goes red.
+    ad = sum(1 for a in picked
+             if (a["damage"] or 0) >= 2 and a["adaptive_type"] == "PHYSICAL_DAMAGE")
+    ap = sum(1 for a in picked
+             if (a["damage"] or 0) >= 2 and a["adaptive_type"] == "MAGIC_DAMAGE")
+    dmg_split = {"ad": ad, "ap": ap,
+                 "warn": armed and (ad < 2 or ap < 2)}
+    return {"comps": comps, "count": n, "leading": leading,
+            "bars": bars, "dmg_split": dmg_split}
 
 
 def comp_alignment(cand_fits: dict[str, float], profile: dict | None) -> float | None:
@@ -958,36 +990,71 @@ def draft():
     active = (request.args.get("active") or "BOT").upper()
     if active not in POSITIONS:
         active = "BOT"
+    # Which team the active slot belongs to. "enemy" turns the recs pane into
+    # a scout: candidates for that enemy lane, countered by MY picks and
+    # synergizing with THEIR picks.
+    active_side = (request.args.get("active_side") or "my").lower()
+    if active_side not in ("my", "enemy"):
+        active_side = "my"
 
     my_team = parse_team("my")
     enemy_team = parse_team("enemy")
+    # Manual comp target for the Comp column: pick flexible champs early with
+    # a comp in mind instead of waiting for the allies' leading comp to
+    # emerge. Empty = auto (score against picked allies' leading comp).
+    comp_choice = (request.args.get("comp") or "").lower()
+    if comp_choice not in config.TEAM_COMPS:
+        comp_choice = ""
+    # Recs pane tab: matchup-based table (winrates) or the attribute/comp-fit
+    # view of the same candidates (attributes).
+    view = request.args.get("view") or "winrates"
+    if view not in ("winrates", "attributes"):
+        view = "winrates"
     # LCU-detected bans split by team — drives the visual icon row under each
     # team; their union also drives scoring (excluded from candidates).
     my_bans_list = [b.strip() for b in (request.args.get("my_bans") or "").split(",") if b.strip()]
     enemy_bans_list = [b.strip() for b in (request.args.get("enemy_bans") or "").split(",") if b.strip()]
     bans = set(my_bans_list) | set(enemy_bans_list)
 
-    # Strip the active slot from my_team for scoring (it's the one we're filling).
-    my_team_for_scoring = {k: v for k, v in my_team.items() if k != active}
+    # The drafting side's allies/opponents; the active slot is stripped from
+    # the allies for scoring (it's the one being filled).
+    drafting_allies = enemy_team if active_side == "enemy" else my_team
+    drafting_opponents = my_team if active_side == "enemy" else enemy_team
+    allies_for_scoring = {k: v for k, v in drafting_allies.items() if k != active}
 
     with db.connect(config.DB_PATH) as conn:
         candidates = compute_draft_scores(
             conn, active, tier,
-            my_team_for_scoring, enemy_team, bans,
+            allies_for_scoring, drafting_opponents, bans,
         )
         role_counts = get_role_counts(conn, tier)
         total_pr = get_total_pickrate(conn, tier)
         attrs = get_champion_attributes(conn)
-        # Comp alignment for the rec column is scored against the *allies
-        # already picked* (active slot excluded — that's the one being filled).
-        align_profile = team_comp_profile(my_team_for_scoring, attrs)
+        # Comp alignment for the rec column: the manually selected comp when
+        # one is chosen, otherwise scored against the drafting side's
+        # *already-picked allies* (active slot excluded).
+        align_profile = team_comp_profile(allies_for_scoring, attrs)
         for c in candidates:
             c["roles"] = role_counts.get(c["champion_name"], 0)
             c["lane_pr_share"] = lane_pr_share(c.get("pickrate"), total_pr.get(c["champion_name"]))
             a = attrs.get(c["champion_name"])
-            c["comp_align"] = comp_alignment(a["comp_fits"], align_profile) if a else None
+            if a is None:
+                c["comp_align"] = None
+            elif comp_choice:
+                c["comp_align"] = a["comp_fits"][comp_choice]
+            else:
+                c["comp_align"] = comp_alignment(a["comp_fits"], align_profile)
             c["subclass_label"] = a["subclass_label"] if a else None
             c["comp_top"] = a["comp_top"] if a else None
+            # Attribute ratings + per-comp fits for the Attributes tab.
+            for key in ("damage", "toughness", "control", "mobility", "utility"):
+                c[key] = a[key] if a else None
+            for comp in config.TEAM_COMPS:
+                c[f"fit_{comp}"] = a["comp_fits"][comp] if a else None
+            c["leading_comps"] = {
+                comp for comp, v in a["comp_fits"].items()
+                if v >= max(a["comp_fits"].values()) - 0.05
+            } if a else set()
         # All champion display names (for the autocomplete datalist).
         champ_names = sorted({
             r["champion_name"] for r in conn.execute(
@@ -1028,26 +1095,34 @@ def draft():
             bk["subclass_label"] = a["subclass_label"] if a else None
             bk["comp_top"] = a["comp_top"] if a else None
 
-    # How each other picked champ moves *your* (active-slot) pick's score, so
+    # How each other picked champ moves the *active-slot* pick's score, so
     # the board can show — next to every other champ — the same contribution
-    # the hover tooltip lists. Keyed by the other champ's lane. Both maps are
-    # empty until the active slot is filled (no "your pick" to score against).
-    active_bk = my_pick_breakdowns.get(active)
-    active_champ = my_team.get(active)
+    # the hover tooltip lists. `ally_impact` renders on MY team's slots,
+    # `enemy_impact` on the enemy's; which breakdown feeds which flips with
+    # the active side (its counters point at the opposing team). Both maps
+    # are empty until the active slot is filled.
+    active_bk = (enemy_pick_breakdowns if active_side == "enemy"
+                 else my_pick_breakdowns).get(active)
+    active_champ = drafting_allies.get(active)
     enemy_impact = {}
     ally_impact = {}
     if active_bk:
+        counter_target = ally_impact if active_side == "enemy" else enemy_impact
+        synergy_target = enemy_impact if active_side == "enemy" else ally_impact
         for it in active_bk["counter_breakdown"]:
-            enemy_impact[it["lane"]] = it
+            counter_target[it["lane"]] = it
         for it in active_bk["synergy_breakdown"]:
-            ally_impact[it["lane"]] = it
+            synergy_target[it["lane"]] = it
 
     raw_sort = request.args.get("sort") or DRAFT_DEFAULT_SORT
     sort_key, sort_col, sort_desc = parse_sort(
         raw_sort, DRAFT_SORT_KEYS, DRAFT_DEFAULT_SORT,
     )
-    if sort_col == "champion_name":
-        candidates.sort(key=lambda c: (c[sort_col] or "").lower(), reverse=sort_desc)
+    if sort_col in ("champion_name", "subclass_label"):
+        candidates.sort(
+            key=lambda c: ((c[sort_col] is None) != sort_desc, (c[sort_col] or "").lower()),
+            reverse=sort_desc,
+        )
     else:
         # No-data rows must sort last in BOTH directions: the None flag has to
         # flip with sort_desc, since reverse=True would otherwise put it first.
@@ -1062,6 +1137,7 @@ def draft():
         "draft.html",
         positions=POSITIONS,
         active=active,
+        active_side=active_side,
         tier=tier,
         available_tiers=available_tiers,
         my_team=my_team,
@@ -1070,6 +1146,8 @@ def draft():
         enemy_avg_score=enemy_avg_score,
         my_comp_profile=my_comp_profile,
         enemy_comp_profile=enemy_comp_profile,
+        comp_choice=comp_choice,
+        view=view,
         comp_labels=config.COMP_LABELS,
         team_comps=config.TEAM_COMPS,
         my_pick_breakdowns=my_pick_breakdowns,

@@ -43,23 +43,52 @@
     {# Team comp profile: mean comp fit per archetype across the team's picks,
        leading comp(s) highlighted, plus composition-gap warnings (3+ picks).
        `profile` is None until a picked champ has attribute data. #}
-    {% macro comp_panel(profile) %}
+    {% macro comp_panel(profile, selected='') %}
     {% if profile %}
     <div class="comp-panel">
         {% for comp in team_comps %}
-        <div class="comp-row {% if comp in profile.leading %}comp-leading{% endif %}">
-            <span class="comp-label">{{ comp_labels[comp] }}</span>
+        <div class="comp-row {% if comp in profile.leading %}comp-leading{% endif %} {% if comp == selected %}comp-target{% endif %}">
+            <span class="comp-label">{{ comp_labels[comp] }}{% if comp == selected %} ◎{% endif %}</span>
             <span class="comp-bar"><span class="comp-bar-fill" style="width: {{ (profile.comps[comp] * 100)|round|int }}%"></span></span>
-            <span class="comp-val">{{ "%.2f"|format(profile.comps[comp]) }}</span>
+            <span class="comp-val">{% if profile.count %}{{ "%.2f"|format(profile.comps[comp]) }}{% else %}—{% endif %}</span>
         </div>
         {% endfor %}
-        {% if profile.warnings %}
-        <div class="comp-warnings">
-            {% for w in profile.warnings %}<span class="comp-warn">⚠ {{ w }}</span>{% endfor %}
+        <div class="team-attr-rows">
+            {% for b in profile.bars %}
+            <div class="comp-row attr-row {% if b.warn %}attr-warn{% endif %}" title="{{ b.hint }}">
+                <span class="comp-label">{{ b.label }}</span>
+                <span class="comp-bar"><span class="comp-bar-fill" style="width: {{ (b.fill * 100)|round|int }}%"></span></span>
+                <span class="comp-val">{{ b.value }}</span>
+            </div>
+            {% endfor %}
+            {% set total = profile.dmg_split.ad + profile.dmg_split.ap %}
+            <div class="comp-row attr-row {% if profile.dmg_split.warn %}attr-warn{% endif %}" title="Damage dealers (rating ≥ 2) by adaptive type. Red: fewer than 2 of either type — enemy can stack one resistance.">
+                <span class="comp-label">AD/AP</span>
+                <span class="comp-bar split-bar">{% if total %}<span class="split-ad" style="width: {{ (profile.dmg_split.ad / total * 100)|round|int }}%"></span><span class="split-ap" style="width: {{ (profile.dmg_split.ap / total * 100)|round|int }}%"></span>{% endif %}</span>
+                <span class="comp-val">{% if profile.count %}{{ profile.dmg_split.ad }}/{{ profile.dmg_split.ap }}{% else %}—{% endif %}</span>
+            </div>
         </div>
-        {% endif %}
     </div>
     {% endif %}
+    {% endmacro %}
+
+    {# 0-3 attribute rating rendered as three dots (Attributes tab). #}
+    {% macro dots(v) %}
+    {%- if v is none -%}
+    <span class="attr-none">—</span>
+    {%- else -%}
+    <span class="attr-dots" title="{{ v }}/3">{%- for i in range(3) -%}<span class="dot{% if i < v %} on{% endif %}"></span>{%- endfor -%}</span>
+    {%- endif -%}
+    {% endmacro %}
+
+    {# 0-1 comp fit; the champion's own leading comp(s) highlighted. #}
+    {% macro fit(c, comp) %}
+    {%- set v = c['fit_' ~ comp] -%}
+    {%- if v is none -%}
+    <span class="attr-none">—</span>
+    {%- else -%}
+    <span class="fit-val {% if comp in c.leading_comps %}fit-lead{% elif v >= 0.7 %}fit-hi{% elif v <= 0.3 %}fit-lo{% endif %}">{{ "%.2f"|format(v) }}</span>
+    {%- endif -%}
     {% endmacro %}
 
     {# Average-score badge for a team header. `avg` is None when the team has no picks. #}
@@ -97,6 +126,15 @@
                 {% endfor %}
             </select>
         </label>
+        <label class="toolbar-field tier-picker" title="Team comp to score the Comp column against. Auto = your picked allies' leading comp.">
+            <span>Comp</span>
+            <select form="draft-form" name="comp">
+                <option value="" {% if not comp_choice %}selected{% endif %}>Auto</option>
+                {% for comp in team_comps %}
+                    <option value="{{ comp }}" {% if comp_choice == comp %}selected{% endif %}>{{ comp_labels[comp] }}</option>
+                {% endfor %}
+            </select>
+        </label>
         <span id="lcu-status" class="lcu-badge lcu-unknown">LCU: …</span>
         <label class="toolbar-toggle">
             <input type="checkbox" id="lcu-sync" checked>
@@ -124,7 +162,9 @@
 
     <form id="draft-form" method="get" action="{{ url_for('draft') }}">
         <input type="hidden" name="active" value="{{ active }}" id="active-input">
+        <input type="hidden" name="active_side" value="{{ active_side }}" id="active-side-input">
         <input type="hidden" name="sort" value="{{ sort_by }}" id="rec-sort-input">
+        <input type="hidden" name="view" value="{{ view }}" id="view-input">
         <input type="hidden" name="my_bans" value="{{ my_bans_str }}" id="my-bans-input">
         <input type="hidden" name="enemy_bans" value="{{ enemy_bans_str }}" id="enemy-bans-input">
         <div class="draft-board">
@@ -142,12 +182,12 @@
                     </div>
                     {% endfor %}
                 </div>
-                {{ comp_panel(my_comp_profile) }}
+                {{ comp_panel(my_comp_profile, comp_choice) }}
                 {% for pos in positions %}
-                <div class="slot {% if pos == active %}slot-active{% endif %}">
-                    <button type="button" class="slot-pick" data-active="{{ pos }}"
+                <div class="slot {% if active_side == 'my' and pos == active %}slot-active{% endif %}">
+                    <button type="button" class="slot-pick" data-active="{{ pos }}" data-side="my"
                             title="Make this the active slot">
-                        {% if pos == active %}● Your pick{% else %}○ pick here{% endif %}
+                        {% if active_side == 'my' and pos == active %}● Your pick{% else %}○ pick here{% endif %}
                     </button>
                     <div class="slot-row">
                         <div class="slot-icon">
@@ -165,7 +205,7 @@
                                    autocomplete="off">
                         </div>
                         {% if my_pick_breakdowns and my_pick_breakdowns[pos] %}
-                        {{ slot_score(my_pick_breakdowns[pos], ally_impact[pos] if pos != active else None) }}
+                        {{ slot_score(my_pick_breakdowns[pos], ally_impact.get(pos)) }}
                         {% endif %}
                     </div>
                     {% if my_pick_breakdowns and my_pick_breakdowns[pos] %}
@@ -176,9 +216,56 @@
             </div>
 
             <div class="recs">
-                <h2>Recommendations <span class="meta-inline">— {{ active }}</span></h2>
+                <div class="recs-tabs">
+                    <button type="button" class="recs-tab {% if view == 'winrates' %}active{% endif %}" data-view="winrates">Winrates</button>
+                    <button type="button" class="recs-tab {% if view == 'attributes' %}active{% endif %}" data-view="attributes">Attributes</button>
+                    <span class="meta-inline">— {% if active_side == 'enemy' %}enemy {% endif %}{{ active }}</span>
+                </div>
                 <div class="recs-scroll">
                 {% if candidates %}
+                {% if view == 'attributes' %}
+                <table class="recs-table">
+                    <thead>
+                        <tr>
+                            <th data-sort="name"      class="th-sort {% if sort_key == 'name'      %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Champion</th>
+                            <th data-sort="fit"       class="th-sort num {% if sort_key == 'fit'       %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Score</th>
+                            <th data-sort="class"     class="th-sort {% if sort_key == 'class'     %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Riot's subclass tags (LoL wiki)">Subclass</th>
+                            <th data-sort="damage"    class="th-sort num {% if sort_key == 'damage'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Damage rating (0–3)">Dmg</th>
+                            <th data-sort="toughness" class="th-sort num {% if sort_key == 'toughness' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Toughness / tankiness rating (0–3)">Tough</th>
+                            <th data-sort="control"   class="th-sort num {% if sort_key == 'control'   %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Crowd-control rating (0–3)">CC</th>
+                            <th data-sort="mobility"  class="th-sort num {% if sort_key == 'mobility'  %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Mobility rating (0–3)">Mob</th>
+                            <th data-sort="utility"   class="th-sort num {% if sort_key == 'utility'   %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Utility rating (0–3): shields, heals, buffs">Util</th>
+                            {% for comp in team_comps %}
+                            <th data-sort="{{ comp }}" class="th-sort num th-comp {% if sort_key == comp %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Fit (0–1) for the {{ comp_labels[comp] }} comp archetype — highlighted when it's this champion's best comp">{{ comp_labels[comp] }}</th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for c in candidates %}
+                        <tr class="rec-row">
+                            <td class="champ">
+                                <img src="https://ddragon.leagueoflegends.com/cdn/{{ dd_version }}/img/champion/{{ champ_id(c.champion_name) }}.png"
+                                     alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+                                <button type="button" class="rec-pick" data-name="{{ c.champion_name }}">{{ c.champion_name }}</button>
+                                <div class="rec-breakdown-src" hidden>{{ pick_tooltip(c, active) }}</div>
+                            </td>
+                            <td class="num winrate {% if c.fit >= 52 %}good{% elif c.fit <= 48 %}bad{% endif %}">
+                                {{ "%.2f"|format(c.fit) }}
+                            </td>
+                            <td class="class-cell">{{ c.subclass_label or '—' }}</td>
+                            <td class="num">{{ dots(c.damage) }}</td>
+                            <td class="num">{{ dots(c.toughness) }}</td>
+                            <td class="num">{{ dots(c.control) }}</td>
+                            <td class="num">{{ dots(c.mobility) }}</td>
+                            <td class="num">{{ dots(c.utility) }}</td>
+                            {% for comp in team_comps %}
+                            <td class="num">{{ fit(c, comp) }}</td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
                 <table class="recs-table">
                     <thead>
                         <tr>
@@ -187,7 +274,7 @@
                             <th data-sort="winrate" class="th-sort num {% if sort_key == 'winrate' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Champion's overall winrate in this lane × tier">WR</th>
                             <th data-sort="counter" class="th-sort num {% if sort_key == 'counter' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Sum of weighted counter-matchup deltas vs picked enemies">vs</th>
                             <th data-sort="synergy" class="th-sort num {% if sort_key == 'synergy' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Sum of weighted synergy deltas with picked teammates">w/</th>
-                            <th data-sort="comp"    class="th-sort num {% if sort_key == 'comp'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="This champion's fit (0–1) to the comp archetype your picked allies are leaning toward. Empty until an ally is picked.">Comp</th>
+                            <th data-sort="comp"    class="th-sort num {% if sort_key == 'comp'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="{% if comp_choice %}This champion's fit (0–1) to the {{ comp_labels[comp_choice] }} comp (selected in the toolbar).{% else %}This champion's fit (0–1) to the comp archetype your picked allies are leaning toward. Empty until an ally is picked; pick a target comp in the toolbar to score before any ally is locked.{% endif %}">Comp{% if comp_choice %} · {{ comp_labels[comp_choice] }}{% endif %}</th>
                             <th data-sort="risk"    class="th-sort num {% if sort_key == 'risk'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Weighted exposure to popular bad matchups in this lane × tier (lower = safer blind pick)">Risk</th>
                             <th data-sort="roles"   class="th-sort num {% if sort_key == 'roles'   %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Number of roles this champion has records in">Roles</th>
                             <th data-sort="lane_share" class="th-sort num {% if sort_key == 'lane_share' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Share of this champion's total pick rate that comes from this lane (100% = only played here)">Lane%</th>
@@ -226,6 +313,7 @@
                         {% endfor %}
                     </tbody>
                 </table>
+                {% endif %}
                 <p class="meta">{{ candidates|length }} candidates</p>
                 {% else %}
                 <p class="empty">No candidates yet — fill in your lane and check tier.</p>
@@ -234,7 +322,7 @@
             </div>
 
             <div class="team team-enemy">
-                <h2>Enemy team {{ team_avg_score(enemy_avg_score) }}<span class="meta-inline">— drag a champ to swap lanes</span></h2>
+                <h2>Enemy team {{ team_avg_score(enemy_avg_score) }}</h2>
                 <div class="team-bans" title="Enemy team's bans">
                     {% for i in ban_slots %}
                     {% set ban = enemy_bans[i] if enemy_bans|length > i else None %}
@@ -249,7 +337,11 @@
                 </div>
                 {{ comp_panel(enemy_comp_profile) }}
                 {% for pos in positions %}
-                <div class="slot enemy-slot" data-lane="{{ pos }}">
+                <div class="slot enemy-slot {% if active_side == 'enemy' and pos == active %}slot-active{% endif %}" data-lane="{{ pos }}">
+                    <button type="button" class="slot-pick" data-active="{{ pos }}" data-side="enemy"
+                            title="Scout picks for this enemy slot (recs from their perspective)">
+                        {% if active_side == 'enemy' and pos == active %}● Enemy pick{% else %}○ pick here{% endif %}
+                    </button>
                     <div class="slot-row">
                         <div class="slot-icon" {% if enemy_team[pos] %}draggable="true" title="Drag {{ enemy_team[pos] }} onto another lane to swap"{% endif %}>
                             {% if enemy_team[pos] %}
@@ -267,7 +359,7 @@
                                    autocomplete="off">
                         </div>
                         {% if enemy_pick_breakdowns and enemy_pick_breakdowns[pos] %}
-                        {{ slot_score(enemy_pick_breakdowns[pos], enemy_impact[pos]) }}
+                        {{ slot_score(enemy_pick_breakdowns[pos], enemy_impact.get(pos)) }}
                         {% endif %}
                     </div>
                     {% if enemy_pick_breakdowns and enemy_pick_breakdowns[pos] %}

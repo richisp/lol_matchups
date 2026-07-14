@@ -66,13 +66,27 @@ async function refreshDraft() {
 }
 
 // Event delegation: handlers stay live after refreshDraft swaps the form.
-const RECS_NATURAL_DESC = new Set(['fit', 'winrate', 'counter', 'synergy', 'roles', 'lane_share', 'comp']);
+const RECS_NATURAL_DESC = new Set(['fit', 'winrate', 'counter', 'synergy', 'roles', 'lane_share', 'comp',
+                                   'damage', 'toughness', 'control', 'mobility', 'utility',
+                                   'f2b', 'dive', 'poke', 'pick', 'split']);
 
 document.addEventListener('click', (e) => {
+    const recsTab = e.target.closest('.recs-tab');
+    if (recsTab) {
+        e.preventDefault();
+        const inp = document.getElementById('view-input');
+        if (inp && inp.value !== recsTab.dataset.view) {
+            inp.value = recsTab.dataset.view;
+            refreshDraft();
+        }
+        return;
+    }
     const slotPick = e.target.closest('.slot-pick');
     if (slotPick) {
         e.preventDefault();
         document.getElementById('active-input').value = slotPick.dataset.active;
+        const sideInp = document.getElementById('active-side-input');
+        if (sideInp) sideInp.value = slotPick.dataset.side || 'my';
         refreshDraft();
         return;
     }
@@ -80,7 +94,9 @@ document.addEventListener('click', (e) => {
     if (recPick) {
         e.preventDefault();
         const active = document.getElementById('active-input').value;
-        const slot = document.querySelector(`input[name="my_${active}"]`);
+        const sideInp = document.getElementById('active-side-input');
+        const side = (sideInp && sideInp.value) || 'my';
+        const slot = document.querySelector(`input[name="${side}_${active}"]`);
         if (slot) {
             slot.value = recPick.dataset.name;
             refreshDraft();
@@ -104,7 +120,7 @@ document.addEventListener('click', (e) => {
     }
 });
 document.addEventListener('change', (e) => {
-    if (e.target.matches('#draft-form input[type="text"], select[name="tier"]')) {
+    if (e.target.matches('#draft-form input[type="text"], select[name="tier"], select[name="comp"]')) {
         refreshDraft();
     }
 });
@@ -215,6 +231,9 @@ function clearDraftBoard() {
     lcuApplied.my_bans = '';
     lcuApplied.enemy_bans = '';
     lcuApplied.lane = (document.getElementById('active-input') || {}).value || '';
+    // A fresh champ select is always about YOUR pick — drop enemy-scout mode.
+    const sideInp = document.getElementById('active-side-input');
+    if (sideInp && sideInp.value !== 'my') { sideInp.value = 'my'; changed = true; }
     return changed;
 }
 
