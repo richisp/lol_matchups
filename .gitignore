@@ -31,3 +31,6 @@ db-version-body.md
 # but we commit it too so the build can never miss it (and to skip Pillow at
 # release time on machines that don't have it). Regenerated on next build if
 # the source .webp is newer.
+
+# Local Claude Code permissions (may contain secrets in command allowlists)
+.claude/settings.local.json
