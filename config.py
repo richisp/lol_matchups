@@ -115,6 +115,13 @@ SYNERGY_WEIGHTS = {
 # this threshold. Used by the blind-pick score.
 BLIND_PICK_BAD_WR_THRESHOLD = 48.0
 
+# Blind risk is subtracted from the fit score with this weight
+# (fit -= RISK_WEIGHT × blind_risk), so risky blind picks rank lower while
+# the enemy lanes that could counter them are still unpicked. Risk excludes
+# lanes the enemy has already filled, so the penalty fades as their team
+# locks in and real counter matchups take over. 0 disables it.
+RISK_WEIGHT = 0.1
+
 # Matchup sample-size handling in the fit score. Below MIN_MATCHUP_GAMES a
 # matchup is no-data (contributes 0, winrate not shown). From there its
 # contribution is scaled linearly by games/GAMES_FULL_CONFIDENCE, reaching
@@ -161,15 +168,27 @@ SUBCLASS_COMP_FIT: dict[str, dict[str, float]] = {
     "WARDEN":     _c(0.3,   0.3,  1.0),
     "ENCHANTER":  _c(0.0,   0.5,  1.0),
     "CATCHER":    _c(0.7,   0.5,  0.5),   # hooks initiate; their CC also peels
-    "ARTILLERY":  _c(0.0,   1.0,  0.5),   # poke core; range also serves disengage
+    "ARTILLERY":  _c(0.0,   1.0,  0.3),   # the poke core
     "BURST":      _c(0.5,   0.5,  0.3),
-    "BATTLEMAGE": _c(0.7,   0.3,  0.5),
+    "BATTLEMAGE": _c(0.5,   0.3,  0.5),
     "MARKSMAN":   _c(0.3,   0.5,  1.0),   # the protect-comp centerpiece
     "ASSASSIN":   _c(0.7,   0.0,  0.0),
-    "SKIRMISHER": _c(0.5,   0.0,  0.3),
-    "JUGGERNAUT": _c(0.5,   0.0,  0.3),
+    "SKIRMISHER": _c(0.3,   0.0,  0.3),   # duels/flanks — doesn't initiate 5v5s
+    "JUGGERNAUT": _c(0.3,   0.0,  0.3),   # follows a fight, doesn't start it
     "DIVER":      _c(1.0,   0.0,  0.0),
-    "SPECIALIST": _c(0.3,   0.5,  0.3),
+    "SPECIALIST": _c(0.3,   0.7,  0.3),   # Heimer/Ziggs-style siege weirdos
+}
+
+# Priority-aware damping, used instead of SUBCLASS_COUNT_DAMPING when the
+# subclass order is meaningful (roles_ranked=1 — scraped from the wiki's
+# Ratings page, which lists Primary and Secondary class): multiplier by
+# position. A hybrid's PRIMARY class carries more weight than its secondary
+# (Akshan is a Marksman first, Assassin second). Positions beyond the tuple
+# reuse the last value.
+SUBCLASS_RANK_DAMPING: dict[int, tuple[float, ...]] = {
+    1: (1.0,),
+    2: (0.7, 0.5),
+    3: (0.6, 0.45, 0.3),
 }
 
 # Hybrid damping: a champion's subclass table values are multiplied by this,
@@ -180,6 +199,18 @@ SUBCLASS_COMP_FIT: dict[str, dict[str, float]] = {
 # damping is uniform per champion rather than per-position.)
 SUBCLASS_COUNT_DAMPING: dict[int, float] = {1: 1.0, 2: 0.7}
 SUBCLASS_COUNT_DAMPING_MIN = 0.5  # 3 or more subclasses
+
+# Priority-aware damping, used instead of SUBCLASS_COUNT_DAMPING when the
+# subclass order is meaningful (roles_ranked=1 — scraped from the wiki's
+# Ratings page, which lists Primary and Secondary class): multiplier by
+# position. A pure specialist keeps 1.0; a hybrid's PRIMARY class carries
+# more weight than its secondary (Akshan is a Marksman first, Assassin
+# second). Positions beyond the tuple reuse the last value.
+SUBCLASS_RANK_DAMPING: dict[int, tuple[float, ...]] = {
+    1: (1.0,),
+    2: (0.7, 0.5),
+    3: (0.6, 0.45, 0.3),
+}
 
 # Subclasses that provide *initiation* — used by the "No engage" team warning.
 ENGAGE_SUBCLASSES: frozenset[str] = frozenset({"VANGUARD", "DIVER", "CATCHER"})

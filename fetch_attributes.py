@@ -72,6 +72,7 @@ def _row_from_cdragon(dd_id: str, info: dict) -> dict | None:
         "champion_name": info["name"],
         "riot_id": dd_id,
         "roles": ",".join(r.upper() for r in d.get("roles") or []),
+        "roles_ranked": 0,  # client roles carry no priority order
         "damage": ps.get("damage"),
         "toughness": ps.get("durability"),
         "control": ps.get("crowdControl"),
@@ -111,6 +112,7 @@ def build_rows() -> tuple[list[dict], list[str], list[str]]:
             "champion_name": info["name"],
             "riot_id": dd_id,
             "roles": ",".join(m.get("roles") or []),
+            "roles_ranked": 0,  # Meraki's list is alphabetical, not priority
             "damage": ratings.get("damage"),
             "toughness": ratings.get("toughness"),
             "control": ratings.get("control"),

@@ -31,7 +31,7 @@
     {# Compact score readout shown directly on a filled slot — same number
        as the tooltip's "Score", visible without hovering. #}
     {% macro slot_score(c) %}
-    <div class="slot-score" title="Score = base + counter contribs + synergy contribs">
+    <div class="slot-score" title="Score = base + counter contribs + synergy contribs − {{ risk_weight }} × blind risk">
         <div class="slot-score-label">Score</div>
         <div class="slot-score-value winrate {% if c.fit >= 52 %}good{% elif c.fit <= 48 %}bad{% endif %}">{{ "%.2f"|format(c.fit) }}</div>
     </div>
@@ -187,10 +187,19 @@
     {% endif %}
     {{ breakdown_section(c.counter_breakdown, 'opponent', c.counter_total, 'vs Enemies') }}
     {{ breakdown_section(c.synergy_breakdown, 'ally', c.synergy_total, 'w/ Allies') }}
-    <div class="bk-risk" title="Weighted exposure to popular bad matchups in this lane (lower = safer blind pick)">
+    <div class="bk-risk" title="Weighted exposure to popular bad counter matchups in unpicked enemy lanes (lower = safer blind pick). Subtracted from the score at ×{{ risk_weight }}; fades as the enemy team locks in.">
         Blind risk
-        <span class="{% if c.blind_risk < 10 %}good{% elif c.blind_risk > 40 %}bad{% endif %}">{{ "%.2f"|format(c.blind_risk) }}</span>
+        <span>
+            <span class="{% if c.blind_risk < 10 %}good{% elif c.blind_risk > 40 %}bad{% endif %}">{{ "%.2f"|format(c.blind_risk) }}</span>
+            {%- if c.risk_penalty is defined and c.risk_penalty > 0 %} <span class="bk-risk-penalty">(−{{ "%.2f"|format(c.risk_penalty) }})</span>{% endif -%}
+        </span>
     </div>
+    {% if c.comp_bonus is defined and c.comp_bonus is not none %}
+    <div class="bk-risk" title="Target comp selected in the toolbar: 10 × this champion's {{ comp_labels[comp_choice] }} fit, added to the score.">
+        Comp bonus · {{ comp_labels[comp_choice] }}
+        <span class="good">+{{ "%.2f"|format(c.comp_bonus) }}</span>
+    </div>
+    {% endif %}
     {% endmacro %}
 
     <div class="draft-layout">

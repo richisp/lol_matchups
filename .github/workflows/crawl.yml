@@ -106,6 +106,16 @@ jobs:
         continue-on-error: true
         run: python fetch_attributes.py
 
+      - name: Wiki class/rating scrape (only when a new champion appeared)
+        # Priority-ordered classes (Primary/Secondary) from the wiki Ratings
+        # page — needs Playwright (the wiki bot-challenges plain HTTP). Skips
+        # itself unless champion_stats has champions without wiki-ranked
+        # attribute rows; wiki class data changes very rarely.
+        continue-on-error: true
+        env:
+          HEADLESS: '1'
+        run: python scrape_wiki_ratings.py
+
       - name: Generate version metadata + release body
         run: python .github/scripts/db_version.py
 

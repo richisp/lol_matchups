@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS champion_attributes (
     champion_name    TEXT PRIMARY KEY,  -- Data Dragon display name (matches champion_stats)
     riot_id          TEXT,              -- Data Dragon id, e.g. 'MonkeyKing'
     roles            TEXT,              -- comma-joined Riot class/subclass tags, e.g. 'FIGHTER,JUGGERNAUT,TANK'
+    roles_ranked     INTEGER NOT NULL DEFAULT 0,  -- 1 = roles are priority-ordered (wiki Primary/Secondary)
     damage           INTEGER,           -- attribute ratings, 0-3
     toughness        INTEGER,
     control          INTEGER,
@@ -77,6 +78,12 @@ def init_db(path: Path) -> None:
                 conn.execute(f"ALTER TABLE champion_attributes DROP COLUMN {col}")
             except sqlite3.OperationalError:
                 pass  # already gone
+        # Additive migration for the same reason.
+        try:
+            conn.execute("ALTER TABLE champion_attributes "
+                         "ADD COLUMN roles_ranked INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # already present
 
 
 @contextmanager
@@ -222,14 +229,21 @@ def upsert_champion_attributes(conn, row: dict) -> None:
     conn.execute(
         """
         INSERT INTO champion_attributes
-            (champion_name, riot_id, roles, damage, toughness, control, mobility,
-             utility, ability_reliance, difficulty, adaptive_type, fetched_at)
-        VALUES (:champion_name, :riot_id, :roles, :damage, :toughness, :control,
-                :mobility, :utility, :ability_reliance, :difficulty,
-                :adaptive_type, datetime('now'))
+            (champion_name, riot_id, roles, roles_ranked, damage, toughness,
+             control, mobility, utility, ability_reliance, difficulty,
+             adaptive_type, fetched_at)
+        VALUES (:champion_name, :riot_id, :roles, :roles_ranked, :damage,
+                :toughness, :control, :mobility, :utility, :ability_reliance,
+                :difficulty, :adaptive_type, datetime('now'))
         ON CONFLICT(champion_name) DO UPDATE SET
             riot_id          = excluded.riot_id,
-            roles            = excluded.roles,
+            -- An unordered write (Meraki/CDragon, roles_ranked=0) must not
+            -- clobber wiki-ordered roles; everything else refreshes freely.
+            roles            = CASE WHEN champion_attributes.roles_ranked = 1
+                                         AND excluded.roles_ranked = 0
+                                    THEN champion_attributes.roles
+                                    ELSE excluded.roles END,
+            roles_ranked     = MAX(champion_attributes.roles_ranked, excluded.roles_ranked),
             damage           = excluded.damage,
             toughness        = excluded.toughness,
             control          = excluded.control,

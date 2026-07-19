@@ -143,6 +143,7 @@ def role_icon_slug(role: str) -> str:
 app.jinja_env.globals["role_icon_slug"] = role_icon_slug
 app.jinja_env.globals["app_version"] = APP_VERSION
 app.jinja_env.globals["games_full_confidence"] = config.GAMES_FULL_CONFIDENCE
+app.jinja_env.globals["risk_weight"] = config.RISK_WEIGHT
 
 
 def tier_label(tier: str) -> str:
@@ -174,49 +175,40 @@ def compute_blind_risk(
     lane: str,
     tier: str,
     known_enemy_lanes: set[str] | None = None,
-    known_ally_lanes: set[str] | None = None,
 ) -> dict[str, float]:
     """For each champion in `lane × tier`, compute a blind-pick risk score.
 
-    Risk is popularity-weighted exposure to bad matchups (focal WR < threshold),
-    summed over two sources:
+    Risk is popularity-weighted exposure to bad counter matchups (focal WR <
+    threshold) — the enemy picks after you and can target your blind pick:
 
-      counter exposure (enemy lanes) — the enemy picks after you and can target
-      your blind pick:
         bad_pr_L = SUM(pickrate) over counter matchups vs enemy lane L
-        contribution = bad_pr_L * (COUNTER_WEIGHTS[lane][L] / 100)
-      synergy exposure (ally lanes) — a blind pick may end up paired with a
-      popular ally it works poorly with:
-        bad_pr_L = SUM(pickrate) over synergy matchups with ally lane L
-        contribution = bad_pr_L * (SYNERGY_WEIGHTS[lane][L] / 100)
+        score = SUM over enemy lanes of bad_pr_L * (COUNTER_WEIGHTS[lane][L] / 100)
 
-    score = SUM(contribution) over the 5 enemy lanes + the 5 ally lanes.
+    Synergy is deliberately excluded: a poorly-fitting ally isn't a *risk* the
+    enemy can exploit, and it muddied the score.
 
     Lower = safer blind pick. Lanes already filled by the enemy are not "blind"
     — the matchup is known and reflected in the `vs` column; pass them via
-    `known_enemy_lanes`. Likewise allies already locked are known partners
-    (`known_ally_lanes`). Each known lane is excluded from its respective term.
+    `known_enemy_lanes` to exclude them. The score is subtracted from `fit`
+    with weight `config.RISK_WEIGHT`.
     """
     if lane not in config.COUNTER_WEIGHTS:
         return {}
     threshold = config.BLIND_PICK_BAD_WR_THRESHOLD
     known_enemy = known_enemy_lanes or set()
-    known_ally = known_ally_lanes or set()
     counter_w = config.COUNTER_WEIGHTS[lane]
-    synergy_w = config.SYNERGY_WEIGHTS.get(lane, {})
 
     rows = conn.execute(
         """
         SELECT champion_name,
-               matchup_type,
                opponent_lane,
                COALESCE(SUM(pickrate), 0) AS bad_pr
           FROM matchups
          WHERE champion_lane = ?
            AND tier = ?
-           AND matchup_type IN ('counter', 'synergy')
+           AND matchup_type = 'counter'
            AND winrate < ?
-         GROUP BY champion_name, matchup_type, opponent_lane
+         GROUP BY champion_name, opponent_lane
         """,
         (lane, tier, threshold),
     ).fetchall()
@@ -224,20 +216,13 @@ def compute_blind_risk(
     scores: dict[str, float] = {}
     for r in rows:
         opp_lane = r["opponent_lane"]
-        if r["matchup_type"] == "counter":
-            if opp_lane in known_enemy:
-                continue
-            weight = counter_w.get(opp_lane, 0) / 100.0
-        else:  # synergy — SYNERGY_WEIGHTS diagonal is 0, so own-lane drops out
-            if opp_lane in known_ally:
-                continue
-            weight = synergy_w.get(opp_lane, 0) / 100.0
+        if opp_lane in known_enemy:
+            continue
+        weight = counter_w.get(opp_lane, 0) / 100.0
         if weight == 0:
             continue
         scores[r["champion_name"]] = scores.get(r["champion_name"], 0.0) + r["bad_pr"] * weight
-    # Halve so the combined counter+synergy score stays on roughly the same
-    # scale as the original counter-only metric (keeps the UI color bands valid).
-    return {name: v / 2.0 for name, v in scores.items()}
+    return scores
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +296,7 @@ def apply_attr_overrides(attrs: dict[str, dict],
                      if s in config.SUBCLASS_COMP_FIT]
             if valid:
                 a["subclasses"] = valid
+                a["roles_ranked"] = 1  # a user-chosen list IS priority-ordered
         if ovr.get("adaptive_type") in ("PHYSICAL_DAMAGE", "MAGIC_DAMAGE"):
             a["adaptive_type"] = ovr["adaptive_type"]
         a["overridden"] = True
@@ -360,8 +346,21 @@ def team_comp_profile(team: dict[str, str], attrs: dict[str, dict]) -> dict:
         c: (sum(a["comp_fits"][c] for a in picked) / n if n else 0.0)
         for c in config.TEAM_COMPS
     }
-    best = max(comps.values())
-    leading = [c for c, v in comps.items() if best > 0 and v >= best - 0.05]
+    # Leading comp(s): highest fit *relative to what's achievable* for that
+    # comp. The columns of SUBCLASS_COMP_FIT aren't equally generous — three
+    # subclasses feed protect at 1.0 but only Artillery feeds poke — so raw
+    # means make protect lead almost any team with a marksman + support.
+    # Normalizing by the all-champion average fit per comp levels the field:
+    # a comp leads when the team is unusually stacked FOR THAT COMP.
+    baseline = {
+        c: (sum(a["comp_fits"][c] for a in attrs.values()) / len(attrs)
+            if attrs else 1.0)
+        for c in config.TEAM_COMPS
+    }
+    rel = {c: (comps[c] / baseline[c] if baseline[c] > 0 else 0.0)
+           for c in config.TEAM_COMPS}
+    best = max(rel.values())
+    leading = [c for c, v in rel.items() if best > 0 and v >= best * 0.95]
 
     # Team attribute bars — the composition-gap dimensions rendered as
     # always-visible progress bars (not chips that only appear when broken).
@@ -800,7 +799,6 @@ def compute_draft_scores(
     risk_scores = compute_blind_risk(
         conn, lane, tier,
         known_enemy_lanes=set(enemy_team.keys()),
-        known_ally_lanes=set(my_team.keys()),
     )
 
     out = []
@@ -858,14 +856,17 @@ def compute_draft_scores(
 
         counter_total = sum(counter_contribs)
         synergy_total = sum(synergy_contribs)
-        fit = base + counter_total + synergy_total
+        blind_risk = risk_scores.get(name, 0.0)
+        risk_penalty = config.RISK_WEIGHT * blind_risk
+        fit = base + counter_total + synergy_total - risk_penalty
         out.append({
             **c,
             "base": base,
             "counter_total": counter_total,
             "synergy_total": synergy_total,
+            "risk_penalty": risk_penalty,
             "fit": fit,
-            "blind_risk": risk_scores.get(name, 0.0),
+            "blind_risk": blind_risk,
             "counter_breakdown": counter_breakdown,
             "synergy_breakdown": synergy_breakdown,
         })
@@ -976,8 +977,9 @@ def compute_pick_breakdown(
     risk_map = compute_blind_risk(
         conn, lane, tier,
         known_enemy_lanes=set(opposing_team.keys()),
-        known_ally_lanes=set(allies_team.keys()),
     )
+    blind_risk = risk_map.get(champ, 0.0)
+    risk_penalty = config.RISK_WEIGHT * blind_risk
     return {
         "champion_name": champ,
         "lane": lane,
@@ -985,8 +987,9 @@ def compute_pick_breakdown(
         "winrate": winrate,
         "counter_total": counter_total,
         "synergy_total": synergy_total,
-        "fit": base + counter_total + synergy_total,
-        "blind_risk": risk_map.get(champ, 0.0),
+        "risk_penalty": risk_penalty,
+        "fit": base + counter_total + synergy_total - risk_penalty,
+        "blind_risk": blind_risk,
         "counter_breakdown": counter_breakdown,
         "synergy_breakdown": synergy_breakdown,
     }
@@ -1135,6 +1138,13 @@ def draft():
                 c["comp_align"] = a["comp_fits"][comp_choice]
             else:
                 c["comp_align"] = comp_alignment(a["comp_fits"], align_profile)
+            # A manually selected target comp is a drafting commitment, so it
+            # feeds the final score: +10 × the candidate's fit for that comp
+            # (up to +10 points). Auto mode stays display-only. Picked-slot
+            # scores/team averages stay pure matchup math either way.
+            if comp_choice and c["comp_align"] is not None:
+                c["comp_bonus"] = 10.0 * c["comp_align"]
+                c["fit"] += c["comp_bonus"]
             c["subclass_label"] = a["subclass_label"] if a else None
             c["comp_top"] = a["comp_top"] if a else None
             # Attribute ratings + per-comp fits for the Attributes tab.
