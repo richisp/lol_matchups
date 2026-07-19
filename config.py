@@ -82,51 +82,67 @@ LCU_POSITION_MAP: dict[str, str] = {
 }
 
 # How much my pick choice in lane X depends on the enemy pick in lane Y.
-# Derived empirically by proximity_weights.py — the share of time each role
-# spends physically near each other role, aggregated over 50 ranked matches
-# (2026-06-25, 1200-unit radius). Each row sums to 100. Used by the blind-pick
-# score and the champ-select helper.
+# Derived empirically by proximity_weights.py — time each role spends physically
+# near each other role, aggregated over 50 ranked matches (2026-07-19, 1200-unit
+# radius). Global-max normalized: every cell in COUNTER_WEIGHTS and
+# SYNERGY_WEIGHTS is divided by the single largest cell across both (the
+# bot<->support duo, which anchors at 100 in SYNERGY_WEIGHTS), so one weight unit
+# means the same shared time everywhere — counter vs synergy and lane vs lane.
+# Rows are NOT forced to sum to 100: diffuse-proximity lanes (jungle) carry less
+# total weight because their matchups matter less. Used by the blind-pick score
+# and the champ-select helper.
 COUNTER_WEIGHTS = {
-    "TOP":     {"TOP": 61, "JUNGLE": 11, "MID":  9, "BOT": 10, "SUPPORT":  9},
-    "JUNGLE":  {"TOP": 15, "JUNGLE": 26, "MID": 20, "BOT": 18, "SUPPORT": 21},
-    "MID":     {"TOP":  9, "JUNGLE": 15, "MID": 52, "BOT": 12, "SUPPORT": 12},
-    "BOT":     {"TOP":  8, "JUNGLE": 12, "MID": 11, "BOT": 36, "SUPPORT": 33},
-    "SUPPORT": {"TOP":  8, "JUNGLE": 14, "MID": 11, "BOT": 34, "SUPPORT": 33},
+    "TOP":     {"TOP": 59, "JUNGLE": 15, "MID": 13, "BOT": 10, "SUPPORT": 11},
+    "JUNGLE":  {"TOP": 15, "JUNGLE": 22, "MID": 17, "BOT": 18, "SUPPORT": 19},
+    "MID":     {"TOP": 13, "JUNGLE": 17, "MID": 55, "BOT": 14, "SUPPORT": 15},
+    "BOT":     {"TOP": 10, "JUNGLE": 18, "MID": 14, "BOT": 44, "SUPPORT": 39},
+    "SUPPORT": {"TOP": 11, "JUNGLE": 19, "MID": 15, "BOT": 39, "SUPPORT": 39},
 }
 
-# Same idea, for synergy with teammate in lane Y, from the same proximity run.
-# Diagonal is 0 — you don't have a teammate in your own lane. Each row sums to 100.
+# Same idea, for synergy with teammate in lane Y — same proximity run, same
+# global-max scale, so a counter weight and a synergy weight of equal value mean
+# equal shared time. Diagonal is 0 (no teammate in your own lane). The
+# bot<->support cell is the global maximum, hence 100.
 SYNERGY_WEIGHTS = {
-    "TOP":     {"TOP":  0, "JUNGLE": 28, "MID": 21, "BOT": 24, "SUPPORT": 27},
-    "JUNGLE":  {"TOP": 20, "JUNGLE":  0, "MID": 26, "BOT": 25, "SUPPORT": 29},
-    "MID":     {"TOP": 17, "JUNGLE": 29, "MID":  0, "BOT": 25, "SUPPORT": 29},
-    "BOT":     {"TOP": 11, "JUNGLE": 16, "MID": 15, "BOT":  0, "SUPPORT": 58},
-    "SUPPORT": {"TOP": 12, "JUNGLE": 18, "MID": 16, "BOT": 54, "SUPPORT":  0},
+    "TOP":     {"TOP":  0, "JUNGLE": 25, "MID": 21, "BOT": 21, "SUPPORT": 24},
+    "JUNGLE":  {"TOP": 25, "JUNGLE":  0, "MID": 31, "BOT": 31, "SUPPORT": 35},
+    "MID":     {"TOP": 21, "JUNGLE": 31, "MID":  0, "BOT": 25, "SUPPORT": 33},
+    "BOT":     {"TOP": 21, "JUNGLE": 31, "MID": 25, "BOT":  0, "SUPPORT": 100},
+    "SUPPORT": {"TOP": 24, "JUNGLE": 35, "MID": 33, "BOT": 100, "SUPPORT":  0},
 }
 
 # A counter-matchup is "bad" if the focal champion's winrate against it is below
 # this threshold. Used by the blind-pick score.
 BLIND_PICK_BAD_WR_THRESHOLD = 48.0
 
+# Matchup sample-size handling in the fit score. Below MIN_MATCHUP_GAMES a
+# matchup is no-data (contributes 0, winrate not shown). From there its
+# contribution is scaled linearly by games/GAMES_FULL_CONFIDENCE, reaching
+# full weight (×1.0) at GAMES_FULL_CONFIDENCE games — so a 35-game 60% WR
+# row nudges the score at ×0.35 instead of swinging it as hard as a
+# 10,000-game row.
+MIN_MATCHUP_GAMES = 30
+GAMES_FULL_CONFIDENCE = 100
+
 # ---------------------------------------------------------------------------
 # Team-comp classification (draws on champion_attributes; see app.py's
 # compute_comp_fits / team_comp_profile).
 #
-# The five canonical comp archetypes. Champions get a soft 0-1 fit score for
-# each — multi-membership, not exclusive assignment (Orianna legitimately
-# fits three comps; Fiora is ~pure split).
-TEAM_COMPS: tuple[str, ...] = ("f2b", "dive", "poke", "pick", "split")
+# The three macro comp archetypes. Pick/dive/wombo are variations of forcing
+# a fight (engage); split-push is a pressure variant of the same coin; and
+# front-to-back / protect-the-carry / disengage are one family (keep the
+# carry alive, win the extended fight). Champions get a soft 0-1 fit per
+# archetype — multi-membership, not exclusive assignment.
+TEAM_COMPS: tuple[str, ...] = ("engage", "poke", "protect")
 
 COMP_LABELS: dict[str, str] = {
-    "f2b":   "Front-to-back",
-    "dive":  "Dive",
-    "poke":  "Poke",
-    "pick":  "Pick",
-    "split": "Split",
+    "engage":  "Engage",
+    "poke":    "Poke",
+    "protect": "F2B",
 }
 
-def _c(f2b: float, dive: float, poke: float, pick: float, split: float) -> dict[str, float]:
-    return {"f2b": f2b, "dive": dive, "poke": poke, "pick": pick, "split": split}
+def _c(engage: float, poke: float, protect: float) -> dict[str, float]:
+    return {"engage": engage, "poke": poke, "protect": protect}
 
 
 # Riot subclass tag -> base comp fit (0-1). Subclasses carry the signal
@@ -140,25 +156,25 @@ def _c(f2b: float, dive: float, poke: float, pick: float, split: float) -> dict[
 # Judgment lives in this one transparent, tweakable table instead of in
 # hand-ratings of 170 champions.
 SUBCLASS_COMP_FIT: dict[str, dict[str, float]] = {
-    #                f2b   dive  poke  pick  split
-    "VANGUARD":   _c(0.3,  1.0,  0.0,  0.5,  0.0),
-    "WARDEN":     _c(1.0,  0.0,  0.5,  0.0,  0.3),
-    "ENCHANTER":  _c(1.0,  0.0,  0.5,  0.3,  0.0),
-    "CATCHER":    _c(0.3,  0.3,  0.5,  1.0,  0.0),
-    "ARTILLERY":  _c(0.0,  0.0,  1.0,  0.5,  0.0),
-    "BURST":      _c(0.3,  0.5,  0.3,  1.0,  0.0),
-    "BATTLEMAGE": _c(0.7,  0.7,  0.3,  0.0,  0.0),
-    "MARKSMAN":   _c(1.0,  0.3,  0.5,  0.0,  0.3),
-    "ASSASSIN":   _c(0.0,  0.7,  0.0,  1.0,  0.5),
-    "SKIRMISHER": _c(0.3,  0.3,  0.0,  0.0,  1.0),
-    "JUGGERNAUT": _c(0.5,  0.5,  0.0,  0.0,  0.5),
-    "DIVER":      _c(0.0,  1.0,  0.0,  0.5,  0.3),
-    "SPECIALIST": _c(0.3,  0.3,  0.3,  0.3,  0.3),
+    #                engage poke  protect
+    "VANGUARD":   _c(1.0,   0.0,  0.3),
+    "WARDEN":     _c(0.3,   0.3,  1.0),
+    "ENCHANTER":  _c(0.0,   0.5,  1.0),
+    "CATCHER":    _c(0.7,   0.5,  0.5),   # hooks initiate; their CC also peels
+    "ARTILLERY":  _c(0.0,   1.0,  0.5),   # poke core; range also serves disengage
+    "BURST":      _c(0.5,   0.5,  0.3),
+    "BATTLEMAGE": _c(0.7,   0.3,  0.5),
+    "MARKSMAN":   _c(0.3,   0.5,  1.0),   # the protect-comp centerpiece
+    "ASSASSIN":   _c(0.7,   0.0,  0.0),
+    "SKIRMISHER": _c(0.5,   0.0,  0.3),
+    "JUGGERNAUT": _c(0.5,   0.0,  0.3),
+    "DIVER":      _c(1.0,   0.0,  0.0),
+    "SPECIALIST": _c(0.3,   0.5,  0.3),
 }
 
 # Hybrid damping: a champion's subclass table values are multiplied by this,
 # keyed by how many subclasses it has. A pure Marksman (Jinx) is the real
-# f2b-hypercarry deal; an Assassin+Marksman+Specialist hybrid (Quinn) is a
+# protect-comp hypercarry deal; an Assassin+Marksman+Specialist hybrid (Quinn) is a
 # jack-of-all-trades and shouldn't get full points anywhere. (The wiki's
 # subclass list is alphabetical — no primary/secondary ordering exists — so
 # damping is uniform per champion rather than per-position.)

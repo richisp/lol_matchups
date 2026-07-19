@@ -6,9 +6,12 @@ seconds into the same row-normalized weight tables used in config.py:
 
     fit(my_lane, other_lane) ∝ time my_lane spends near other_lane
 
-Output rows use the canonical positions from config.POSITIONS and each row sums
-to 100 (integers), so the printed tables are drop-in comparable with
-config.COUNTER_WEIGHTS / config.SYNERGY_WEIGHTS.
+Output rows use the canonical positions from config.POSITIONS. Every cell in
+both tables is normalized by the single largest cell across both — "global-max"
+(see weights_from_seconds) — so one weight unit means the same amount of shared
+time everywhere: counter vs synergy and lane vs lane. Rows are not forced to any
+fixed sum. The printed tables are drop-in replacements for config.COUNTER_WEIGHTS
+/ config.SYNERGY_WEIGHTS.
 
 Usage:
     # From local JSON files (match + timeline as returned by match-v5):
@@ -124,66 +127,50 @@ def new_seconds_table():
 
 
 def weights_from_seconds(synergy_seconds, counter_seconds):
-    """Turn accumulated proximity seconds into config-shaped weight tables."""
+    """Turn accumulated proximity seconds into config-shaped weight tables.
+
+    Global-max normalization: every cell in BOTH tables is divided by the single
+    largest cell across both (empirically the bot<->support ally duo) and scaled
+    to 0-100. One weight unit therefore means the same amount of shared time
+    everywhere — counter vs synergy, and lane vs lane. Equal proximity time gives
+    equal weight regardless of team.
+
+    Rows are NOT forced to any fixed sum, and that is the point:
+      * The bot<->support synergy cell anchors at 100; nothing else reaches it.
+      * Diffuse-proximity lanes (jungle) carry lower total weight than duel lanes
+        (top/mid), because their individual matchups genuinely matter less.
+      * Synergy rows for bot/support exceed their counter rows, because those
+        roles spend more of the game alongside allies than against enemies.
+    """
+    gmax = max(
+        (
+            seconds.get(src, {}).get(tgt, 0.0)
+            for seconds in (counter_seconds, synergy_seconds)
+            for src in config.POSITIONS
+            for tgt in config.POSITIONS
+        ),
+        default=0.0,
+    )
+
+    def scale_table(seconds, *, zero_diagonal):
+        table = {}
+        for src in config.POSITIONS:
+            table[src] = {}
+            for tgt in config.POSITIONS:
+                if (zero_diagonal and tgt == src) or gmax == 0:
+                    table[src][tgt] = 0
+                else:
+                    table[src][tgt] = round(seconds.get(src, {}).get(tgt, 0.0) / gmax * 100)
+        return table
+
     return {
-        "synergy": _normalize(synergy_seconds, include_diagonal=False),
-        "counter": _normalize(counter_seconds, include_diagonal=True),
+        "synergy": scale_table(synergy_seconds, zero_diagonal=True),
+        "counter": scale_table(counter_seconds, zero_diagonal=False),
         "raw_seconds": {
             "synergy": _round_seconds_table(synergy_seconds),
             "counter": _round_seconds_table(counter_seconds),
         },
     }
-
-
-def _normalize(seconds_by_role, *, include_diagonal):
-    """Row-normalize proximity seconds to integer weights summing to 100.
-
-    Produces a full row for every position in config.POSITIONS (missing
-    roles get 0) so the output is shaped like config.COUNTER_WEIGHTS /
-    config.SYNERGY_WEIGHTS. Synergy excludes the diagonal (no teammate in
-    your own lane); counter keeps it (your direct lane opponent).
-    """
-    result = {}
-
-    for source_role in config.POSITIONS:
-        target_seconds = seconds_by_role.get(source_role, {})
-
-        row_seconds = {
-            target_role: target_seconds.get(target_role, 0.0)
-            for target_role in config.POSITIONS
-            if include_diagonal or target_role != source_role
-        }
-
-        result[source_role] = _to_int_weights(row_seconds)
-
-    return result
-
-
-def _to_int_weights(row_seconds):
-    """Scale a {role: seconds} row to integer percentages summing to 100.
-
-    Uses largest-remainder rounding so the row total is exactly 100 (or all
-    zeros when there was no proximity data for the source role).
-    """
-    total = sum(row_seconds.values())
-
-    if total == 0:
-        return {role: 0 for role in row_seconds}
-
-    exact = {role: (seconds / total) * 100 for role, seconds in row_seconds.items()}
-    floored = {role: int(value) for role, value in exact.items()}
-    remainder = 100 - sum(floored.values())
-
-    # Hand the leftover points to the roles with the largest fractional parts.
-    order = sorted(
-        exact,
-        key=lambda role: exact[role] - floored[role],
-        reverse=True,
-    )
-    for role in order[:remainder]:
-        floored[role] += 1
-
-    return floored
 
 
 def _round_seconds_table(nested):

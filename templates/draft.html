@@ -17,7 +17,7 @@
                 <td class="bk-name">{{ it[key] }}</td>
                 <td class="bk-lane">{{ it.lane }}</td>
                 <td class="bk-wr" {% if it.inferred %}title="Inferred from the reverse matchup (this pair isn't on {{ it[key] }}'s list)"{% endif %}>{% if it.winrate is not none %}{% if it.inferred %}~{% endif %}{{ "%.2f"|format(it.winrate) }}%{% else %}—{% endif %}</td>
-                <td class="bk-games">{% if it.games %}{{ "{:,}".format(it.games) }}g{% else %}<span class="bk-faded">no data</span>{% endif %}</td>
+                <td class="bk-games">{% if it.games %}{{ "{:,}".format(it.games) }}g{% if it.confidence is defined and it.confidence < 1.0 %} <span class="bk-conf" title="Small sample: contribution scaled to {{ (it.confidence * 100)|round|int }}% (full weight at {{ games_full_confidence }} games)">×{{ "%.2f"|format(it.confidence) }}</span>{% endif %}{% else %}<span class="bk-faded">no data</span>{% endif %}</td>
                 <td class="bk-contrib {% if it.contrib > 0 %}good{% elif it.contrib < 0 %}bad{% endif %}">{% if it.contrib >= 0 %}+{% endif %}{{ "%.2f"|format(it.contrib) }}</td>
             </tr>
             {% endfor %}
@@ -29,15 +29,27 @@
     {% endmacro %}
 
     {# Compact score readout shown directly on a filled slot — same number
-       as the tooltip's "Score", visible without hovering. When `impact` is
-       given (a counter/synergy breakdown row vs YOUR active pick), the raw
-       matchup winrate delta (winrate − 50) is appended in brackets, e.g.
-       54.50 (+2.0) — how this champ moves your pick's matchup. #}
-    {% macro slot_score(c, impact=None) %}
-    <div class="slot-score" title="Score = base + counter contribs + synergy contribs{% if impact and impact.winrate is not none %} · (…) = your pick's {% if impact.inferred %}~{% endif %}{{ '%.2f'|format(impact.winrate) }}% matchup vs {{ impact.opponent or impact.ally }}{% endif %}">
+       as the tooltip's "Score", visible without hovering. #}
+    {% macro slot_score(c) %}
+    <div class="slot-score" title="Score = base + counter contribs + synergy contribs">
         <div class="slot-score-label">Score</div>
-        <div class="slot-score-value winrate {% if c.fit >= 52 %}good{% elif c.fit <= 48 %}bad{% endif %}">{{ "%.2f"|format(c.fit) }}{% if impact and impact.winrate is not none %} <span class="slot-impact-inline">(<span class="{% if impact.winrate > 52 %}good{% elif impact.winrate < 48 %}bad{% endif %}">{% if impact.inferred %}~{% endif %}{{ "%.1f"|format(impact.winrate) }}</span>)</span>{% endif %}</div>
+        <div class="slot-score-value winrate {% if c.fit >= 52 %}good{% elif c.fit <= 48 %}bad{% endif %}">{{ "%.2f"|format(c.fit) }}</div>
     </div>
+    {% endmacro %}
+
+    {# The active pick's matchup winrate vs/with this slot's champion,
+       appended after the lane label (e.g. "MID · you 48.2%") — kept away
+       from the Score block so the two numbers can't be conflated.
+       `impact` is a counter ('opponent' key) or synergy ('ally' key) row
+       from the active pick's breakdown. #}
+    {% macro lane_impact(impact) %}
+    {%- if impact and impact.winrate is not none -%}
+    <span class="lane-impact"
+          title="{{ active_champ or 'Your pick' }} {% if impact.opponent %}wins {% if impact.inferred %}~{% endif %}{{ '%.2f'|format(impact.winrate) }}% of games against {{ impact.opponent }}{% else %}+ {{ impact.ally }} win {% if impact.inferred %}~{% endif %}{{ '%.2f'|format(impact.winrate) }}% of games together{% endif %}">
+        · {{ 'VS' if impact.opponent else 'W/' }}
+        <span class="{% if impact.winrate > 52 %}good{% elif impact.winrate < 48 %}bad{% endif %}">{% if impact.inferred %}~{% endif %}{{ "%.1f"|format(impact.winrate) }}%</span>
+    </span>
+    {%- endif -%}
     {% endmacro %}
 
     {# Team comp profile: mean comp fit per archetype across the team's picks,
@@ -91,6 +103,70 @@
     {%- endif -%}
     {% endmacro %}
 
+    {# Attribute line + override editor for a filled slot. `a` is the
+       (possibly overridden) champion_attributes row. Editor fields carry NO
+       name attribute so FormData never submits them — Apply POSTs them to
+       /api/overrides (persisted in settings.json across games/restarts). #}
+    {% macro slot_attrs(name, a) %}
+    {% if a %}
+    <div class="slot-attrs {% if a.overridden %}ovr{% endif %}">
+        <span class="slot-attrs-class"
+              title="{{ a.subclass_label }} · Damage {{ a.damage }} · Toughness {{ a.toughness }} · CC {{ a.control }} · Mobility {{ a.mobility }} · Utility {{ a.utility }}{% if a.overridden %} (user override){% endif %}">
+            {%- if a.overridden %}✎ {% endif -%}
+            {{ a.subclass_label }}
+        </span>
+        {% if a.adaptive_type == 'PHYSICAL_DAMAGE' %}
+        <img class="slot-attrs-type-ico" src="{{ url_for('static', filename='img/adaptive-ad.png') }}" alt="AD" title="Adaptive damage type: physical (AD)">
+        {% elif a.adaptive_type == 'MAGIC_DAMAGE' %}
+        <img class="slot-attrs-type-ico" src="{{ url_for('static', filename='img/adaptive-ap.png') }}" alt="AP" title="Adaptive damage type: magic (AP)">
+        {% else %}
+        <span class="slot-attrs-type">—</span>
+        {% endif %}
+        <span class="slot-attr-ratings">
+            {% for key, lbl in [('damage','Damage'), ('toughness','Toughness'), ('control','Crowd control'), ('mobility','Mobility'), ('utility','Utility')] %}
+            <span class="slot-attr-group" title="{{ lbl }} {{ a[key] if a[key] is not none else '—' }}/3"><img class="slot-attr-ico" src="{{ url_for('static', filename='img/rating-' ~ key ~ '.png') }}" alt="{{ lbl }}">{{ dots(a[key]) }}</span>
+            {% endfor %}
+        </span>
+        <button type="button" class="slot-attrs-edit" title="Override attributes for this game — runes/items can change a champion's effective profile (e.g. full-AP Gragas)">✎</button>
+    </div>
+    <div class="slot-editor" hidden data-champ="{{ name }}">
+        <div class="editor-row">
+            <select class="ovr-subclass" title="Effective subclass for this build">
+                {% for tag in subclass_tags %}
+                <option value="{{ tag }}" {% if a.subclasses and tag == a.subclasses[0] %}selected{% endif %}>{{ tag.capitalize() }}</option>
+                {% endfor %}
+            </select>
+            <select class="ovr-adaptive" title="Damage type for this build">
+                <option value="PHYSICAL_DAMAGE" {% if a.adaptive_type == 'PHYSICAL_DAMAGE' %}selected{% endif %}>AD</option>
+                <option value="MAGIC_DAMAGE" {% if a.adaptive_type == 'MAGIC_DAMAGE' %}selected{% endif %}>AP</option>
+            </select>
+        </div>
+        <div class="editor-row editor-ratings">
+            {% for key, lbl in [('damage','Dmg'), ('toughness','Tgh'), ('control','CC'), ('mobility','Mob'), ('utility','Utl')] %}
+            <label>{{ lbl }}<input type="number" class="ovr-rating" data-key="{{ key }}" min="0" max="3" value="{{ a[key] if a[key] is not none else 0 }}"></label>
+            {% endfor %}
+        </div>
+        <div class="editor-row editor-actions">
+            <button type="button" class="ovr-apply">Apply</button>
+            <button type="button" class="ovr-reset" {% if not a.overridden %}disabled{% endif %}>Reset</button>
+        </div>
+    </div>
+    {% else %}
+    {# Placeholder with the same structure but empty values, so every slot
+       is pixel-identical in height whether or not a champion fills it. #}
+    <div class="slot-attrs slot-attrs-empty">
+        <span class="slot-attrs-class">—</span>
+        <span class="slot-attrs-type">—</span>
+        <span class="slot-attr-ratings">
+            {% for key in ['damage', 'toughness', 'control', 'mobility', 'utility'] %}
+            <span class="slot-attr-group"><img class="slot-attr-ico" src="{{ url_for('static', filename='img/rating-' ~ key ~ '.png') }}" alt="">{{ dots(0) }}</span>
+            {% endfor %}
+        </span>
+        <button type="button" class="slot-attrs-edit" disabled tabindex="-1">✎</button>
+    </div>
+    {% endif %}
+    {% endmacro %}
+
     {# Average-score badge for a team header. `avg` is None when the team has no picks. #}
     {% macro team_avg_score(avg) %}
         {% if avg is not none %}
@@ -113,7 +189,7 @@
     {{ breakdown_section(c.synergy_breakdown, 'ally', c.synergy_total, 'w/ Allies') }}
     <div class="bk-risk" title="Weighted exposure to popular bad matchups in this lane (lower = safer blind pick)">
         Blind risk
-        <span class="{% if c.blind_risk < 5 %}good{% elif c.blind_risk > 10 %}bad{% endif %}">{{ "%.2f"|format(c.blind_risk) }}</span>
+        <span class="{% if c.blind_risk < 10 %}good{% elif c.blind_risk > 40 %}bad{% endif %}">{{ "%.2f"|format(c.blind_risk) }}</span>
     </div>
     {% endmacro %}
 
@@ -197,7 +273,7 @@
                             {% endif %}
                         </div>
                         <div class="slot-fields">
-                            <div class="slot-lane">{{ pos }}</div>
+                            <div class="slot-lane">{{ pos }}{{ lane_impact(ally_impact.get(pos)) }}</div>
                             <input type="text" name="my_{{ pos }}"
                                    list="champ-list"
                                    placeholder="champion"
@@ -205,11 +281,14 @@
                                    autocomplete="off">
                         </div>
                         {% if my_pick_breakdowns and my_pick_breakdowns[pos] %}
-                        {{ slot_score(my_pick_breakdowns[pos], ally_impact.get(pos)) }}
+                        {{ slot_score(my_pick_breakdowns[pos]) }}
                         {% endif %}
                     </div>
                     {% if my_pick_breakdowns and my_pick_breakdowns[pos] %}
+                    {{ slot_attrs(my_team[pos], my_pick_breakdowns[pos].attr) }}
                     <div class="rec-breakdown-src" hidden>{{ pick_tooltip(my_pick_breakdowns[pos], pos) }}</div>
+                    {% else %}
+                    {{ slot_attrs(none, none) }}
                     {% endif %}
                 </div>
                 {% endfor %}
@@ -272,6 +351,7 @@
                             <th data-sort="name"    class="th-sort {% if sort_key == 'name'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Champion</th>
                             <th data-sort="fit"     class="th-sort num {% if sort_key == 'fit'     %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}">Score</th>
                             <th data-sort="winrate" class="th-sort num {% if sort_key == 'winrate' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Champion's overall winrate in this lane × tier">WR</th>
+                            <th data-sort="pickrate" class="th-sort num {% if sort_key == 'pickrate' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Champion's pick rate in this lane × tier">PR</th>
                             <th data-sort="counter" class="th-sort num {% if sort_key == 'counter' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Sum of weighted counter-matchup deltas vs picked enemies">vs</th>
                             <th data-sort="synergy" class="th-sort num {% if sort_key == 'synergy' %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="Sum of weighted synergy deltas with picked teammates">w/</th>
                             <th data-sort="comp"    class="th-sort num {% if sort_key == 'comp'    %}sorted-{{ 'desc' if sort_desc else 'asc' }}{% endif %}" title="{% if comp_choice %}This champion's fit (0–1) to the {{ comp_labels[comp_choice] }} comp (selected in the toolbar).{% else %}This champion's fit (0–1) to the comp archetype your picked allies are leaning toward. Empty until an ally is picked; pick a target comp in the toolbar to score before any ally is locked.{% endif %}">Comp{% if comp_choice %} · {{ comp_labels[comp_choice] }}{% endif %}</th>
@@ -295,6 +375,9 @@
                             <td class="num winrate {% if c.winrate is not none and c.winrate >= 52 %}good{% elif c.winrate is not none and c.winrate <= 48 %}bad{% endif %}">
                                 {% if c.winrate is not none %}{{ "%.2f"|format(c.winrate) }}{% else %}—{% endif %}
                             </td>
+                            <td class="num">
+                                {% if c.pickrate is not none %}{{ "%.1f"|format(c.pickrate) }}%{% else %}—{% endif %}
+                            </td>
                             <td class="num {% if c.counter_total > 1 %}good{% elif c.counter_total < -1 %}bad{% endif %}">
                                 {% if c.counter_total >= 0 %}+{% endif %}{{ "%.2f"|format(c.counter_total) }}
                             </td>
@@ -304,7 +387,7 @@
                             <td class="num {% if c.comp_align is not none and c.comp_align >= 0.6 %}good{% endif %}">
                                 {% if c.comp_align is not none %}{{ "%.2f"|format(c.comp_align) }}{% else %}—{% endif %}
                             </td>
-                            <td class="num {% if c.blind_risk < 5 %}good{% elif c.blind_risk > 10 %}bad{% endif %}">
+                            <td class="num {% if c.blind_risk < 10 %}good{% elif c.blind_risk > 40 %}bad{% endif %}">
                                 {{ "%.2f"|format(c.blind_risk) }}
                             </td>
                             <td class="num">{{ c.roles }}</td>
@@ -351,7 +434,7 @@
                             {% endif %}
                         </div>
                         <div class="slot-fields">
-                            <div class="slot-lane">{{ pos }}</div>
+                            <div class="slot-lane">{{ pos }}{{ lane_impact(enemy_impact.get(pos)) }}</div>
                             <input type="text" name="enemy_{{ pos }}"
                                    list="champ-list"
                                    placeholder="champion"
@@ -359,11 +442,14 @@
                                    autocomplete="off">
                         </div>
                         {% if enemy_pick_breakdowns and enemy_pick_breakdowns[pos] %}
-                        {{ slot_score(enemy_pick_breakdowns[pos], enemy_impact.get(pos)) }}
+                        {{ slot_score(enemy_pick_breakdowns[pos]) }}
                         {% endif %}
                     </div>
                     {% if enemy_pick_breakdowns and enemy_pick_breakdowns[pos] %}
+                    {{ slot_attrs(enemy_team[pos], enemy_pick_breakdowns[pos].attr) }}
                     <div class="rec-breakdown-src" hidden>{{ pick_tooltip(enemy_pick_breakdowns[pos], pos) }}</div>
+                    {% else %}
+                    {{ slot_attrs(none, none) }}
                     {% endif %}
                 </div>
                 {% endfor %}

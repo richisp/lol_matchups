@@ -190,6 +190,130 @@
     box-shadow: 0 0 0 1px #5b8def, 0 0 14px -4px rgba(91, 141, 239, 0.55);
 }
 .enemy-slot.drag-source { opacity: 0.45; }
+/* Attribute line under a filled slot: subclass + AD/AP + icon-and-dots
+   ratings + edit. The empty variant reserves the exact same height so a
+   slot never grows when a champion fills it. */
+.slot-attrs {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0 0.75rem 0.4rem;
+    min-height: 14px;
+}
+.slot-attrs-class {
+    flex: 0 1 auto;
+    min-width: 0;
+    font-size: 0.66rem;
+    color: #8a9bc5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.slot-attrs.ovr .slot-attrs-class { color: #e8b45a; }
+.slot-attrs-type {
+    flex: 0 0 auto;
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    color: #666;
+}
+.slot-attrs-type.type-ad { color: #e8823a; }
+.slot-attrs-type.type-ap { color: #3ac9e8; }
+.slot-attr-ratings {
+    display: flex;
+    align-items: center;
+    gap: 0.38rem;
+    flex: 0 0 auto;
+    margin-left: auto;
+}
+.slot-attr-group { display: inline-flex; align-items: center; gap: 3px; }
+/* LoL-wiki rating icons (static/img/rating-*.png) — cream-gold glyphs. */
+.slot-attr-ico {
+    width: 11px;
+    height: 11px;
+    display: block;
+    object-fit: contain;
+}
+.slot-attrs-type-ico {
+    flex: 0 0 auto;
+    width: 11px;
+    height: 11px;
+    display: block;
+    object-fit: contain;
+}
+.slot-attrs .attr-dots { gap: 2px; }
+.slot-attrs .attr-dots .dot { width: 5px; height: 5px; }
+.slot-attrs.ovr .attr-dots .dot.on { background: #e8b45a; }
+/* Empty-slot placeholder: same markup, dimmed, edit button unclickable
+   but still occupying its space. */
+.slot-attrs-empty { opacity: 0.3; }
+.slot-attrs-empty .slot-attrs-edit { visibility: hidden; }
+.slot-attrs-edit {
+    flex: 0 0 auto;
+    background: transparent;
+    border: none;
+    color: #555;
+    font-size: 0.75rem;
+    padding: 0 0.1rem;
+    cursor: pointer;
+    line-height: 1;
+}
+.slot-attrs-edit:hover { color: #e6e6e6; background: transparent; }
+
+/* Per-game override editor (hidden until ✎ is clicked). */
+.slot-editor {
+    padding: 0.45rem 0.75rem 0.55rem;
+    border-top: 1px solid #232328;
+    background: #141416;
+}
+.slot-editor .editor-row { display: flex; gap: 0.4rem; margin-bottom: 0.4rem; }
+.slot-editor select {
+    flex: 1;
+    min-width: 0;
+    background: #232328;
+    color: #e6e6e6;
+    border: 1px solid #34343a;
+    border-radius: 4px;
+    padding: 0.25rem 0.35rem;
+    font-size: 0.74rem;
+    font-family: inherit;
+}
+.editor-ratings label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    flex: 1;
+    font-size: 0.6rem;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+.editor-ratings input {
+    width: 100%;
+    background: #232328;
+    color: #e6e6e6;
+    border: 1px solid #34343a;
+    border-radius: 4px;
+    padding: 0.2rem 0.3rem;
+    font-size: 0.78rem;
+    font-family: inherit;
+}
+.editor-actions { margin-bottom: 0 !important; }
+.editor-actions button {
+    flex: 1;
+    border: none;
+    border-radius: 4px;
+    padding: 0.3rem 0;
+    font-size: 0.72rem;
+    font-family: inherit;
+    cursor: pointer;
+}
+.ovr-apply { background: #2f6fed; color: #fff; }
+.ovr-apply:hover { background: #3a7cff; }
+.ovr-reset { background: #232328; color: #aaa; border: 1px solid #34343a !important; }
+.ovr-reset:hover:not(:disabled) { color: #e6e6e6; }
+.ovr-reset:disabled { opacity: 0.4; cursor: default; }
+
 .slot-fields { flex: 1; min-width: 0; }
 .slot-lane {
     font-size: 0.7rem;
@@ -234,17 +358,20 @@
     line-height: 1;
 }
 
-/* Your active pick's matchup winrate vs this champ, shown in brackets right
-   after the slot's own score, e.g. 54.50 (52.0). White + smaller so the
-   score leads. */
-.slot-impact-inline {
-    font-size: 0.8rem;
-    font-weight: 600;
+/* Your active pick's matchup winrate vs/with this slot's champion, shown
+   after the lane label ("MID · you 48.2%") — deliberately away from the
+   Score block so the two numbers can't be conflated. */
+.lane-impact {
+    font-size: 0.68rem;
+    font-weight: 400;
+    letter-spacing: 0.3px;
+    text-transform: none;
+    color: #777;
     font-variant-numeric: tabular-nums;
-    color: #e6e6e6;
+    margin-left: 0.15rem;
 }
-.slot-impact-inline .good { color: #5cd65c; }
-.slot-impact-inline .bad  { color: #e85a5a; }
+.lane-impact .good { color: #5cd65c; }
+.lane-impact .bad  { color: #e85a5a; }
 
 .recs {
     display: flex;
@@ -311,9 +438,24 @@
     border-collapse: collapse;
     background: #18181b;
     border-radius: 8px;
-    overflow: hidden;
+    /* base.html sets table { overflow: hidden } for corner clipping, but an
+       overflow other than visible breaks position:sticky on the header. */
+    overflow: visible;
 }
 .recs-table th { padding: 0.55rem 0.75rem; }
+/* Keep the header row visible while the candidate list scrolls. Sticks to
+   the top of .recs-scroll. border-bottom doesn't travel with sticky cells
+   under border-collapse, so the divider is a box-shadow instead. */
+.recs-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: #1f1f23;
+    border-bottom: none;
+    box-shadow: 0 1px 0 #2a2a2e;
+}
+.recs-table thead th:first-child { border-top-left-radius: 8px; }
+.recs-table thead th:last-child { border-top-right-radius: 8px; }
 .recs-table th.th-sort { cursor: pointer; user-select: none; }
 .recs-table th.th-sort:hover { color: #e6e6e6; }
 .recs-table th.sorted-asc::after  { content: ' ▲'; color: #5b8def; font-size: 0.7em; }
@@ -523,6 +665,7 @@
 .bk-wr { color: #aaa; text-align: right; font-size: 0.82rem; }
 .bk-games { color: #666; font-size: 0.72rem; text-align: right; }
 .bk-faded { color: #555; font-style: italic; }
+.bk-conf { color: #b8860b; font-size: 0.68rem; }
 .bk-contrib { font-weight: 600; text-align: right; font-size: 0.86rem; }
 .bk-empty { color: #666; font-size: 0.78rem; padding: 0.15rem 0; }
 

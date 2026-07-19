@@ -65,10 +65,25 @@ async function refreshDraft() {
     }
 }
 
+// Persist one champion's attribute override (null = reset to fetched data),
+// then re-render so every score/panel reflects it.
+async function saveOverride(champion, override) {
+    try {
+        await fetch('/api/overrides', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ champion, override }),
+        });
+    } catch (e) {
+        console.error('override save failed', e);
+    }
+    refreshDraft();
+}
+
 // Event delegation: handlers stay live after refreshDraft swaps the form.
-const RECS_NATURAL_DESC = new Set(['fit', 'winrate', 'counter', 'synergy', 'roles', 'lane_share', 'comp',
+const RECS_NATURAL_DESC = new Set(['fit', 'winrate', 'pickrate', 'counter', 'synergy', 'roles', 'lane_share', 'comp',
                                    'damage', 'toughness', 'control', 'mobility', 'utility',
-                                   'f2b', 'dive', 'poke', 'pick', 'split']);
+                                   'engage', 'poke', 'protect']);
 
 document.addEventListener('click', (e) => {
     const recsTab = e.target.closest('.recs-tab');
@@ -88,6 +103,38 @@ document.addEventListener('click', (e) => {
         const sideInp = document.getElementById('active-side-input');
         if (sideInp) sideInp.value = slotPick.dataset.side || 'my';
         refreshDraft();
+        return;
+    }
+    // Attribute override editor: toggle, apply, reset. The editor fields
+    // have no `name`, so they never enter FormData — Apply POSTs them to
+    // /api/overrides, which persists to settings.json (survives games and
+    // app restarts). The refreshed page then reflects the stored override.
+    const attrsEdit = e.target.closest('.slot-attrs-edit');
+    if (attrsEdit) {
+        e.preventDefault();
+        const editor = attrsEdit.closest('.slot').querySelector('.slot-editor');
+        if (editor) editor.hidden = !editor.hidden;
+        return;
+    }
+    const ovrApply = e.target.closest('.ovr-apply');
+    if (ovrApply) {
+        e.preventDefault();
+        const editor = ovrApply.closest('.slot-editor');
+        if (!editor) return;
+        const ovr = { subclasses: [editor.querySelector('.ovr-subclass').value],
+                      adaptive_type: editor.querySelector('.ovr-adaptive').value };
+        for (const r of editor.querySelectorAll('.ovr-rating')) {
+            const v = parseInt(r.value, 10);
+            if (!isNaN(v)) ovr[r.dataset.key] = Math.max(0, Math.min(3, v));
+        }
+        saveOverride(editor.dataset.champ, ovr);
+        return;
+    }
+    const ovrReset = e.target.closest('.ovr-reset');
+    if (ovrReset) {
+        e.preventDefault();
+        const editor = ovrReset.closest('.slot-editor');
+        if (editor) saveOverride(editor.dataset.champ, null);
         return;
     }
     const recPick = e.target.closest('.rec-pick');
@@ -234,6 +281,8 @@ function clearDraftBoard() {
     // A fresh champ select is always about YOUR pick — drop enemy-scout mode.
     const sideInp = document.getElementById('active-side-input');
     if (sideInp && sideInp.value !== 'my') { sideInp.value = 'my'; changed = true; }
+    // NOTE: attribute overrides intentionally survive the wipe — they're
+    // persistent user data (settings.json), not per-game board state.
     return changed;
 }
 

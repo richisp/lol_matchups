@@ -50,11 +50,9 @@ CHAMPION_SORT_KEYS: dict[str, tuple[str, bool]] = {
     "control":   ("control", True),
     "mobility":  ("mobility", True),
     "utility":   ("utility", True),
-    "f2b":       ("fit_f2b", True),
-    "dive":      ("fit_dive", True),
+    "engage":    ("fit_engage", True),
     "poke":      ("fit_poke", True),
-    "pick":      ("fit_pick", True),
-    "split":     ("fit_split", True),
+    "protect":   ("fit_protect", True),
 }
 DEFAULT_SORT = "name"
 
@@ -71,17 +69,16 @@ DRAFT_SORT_KEYS: dict[str, tuple[str, bool]] = {
     "roles":   ("roles", True),
     "lane_share": ("lane_pr_share", True),
     "comp":    ("comp_align", True),
+    "pickrate":  ("pickrate", True),
     "class":     ("subclass_label", False),
     "damage":    ("damage", True),
     "toughness": ("toughness", True),
     "control":   ("control", True),
     "mobility":  ("mobility", True),
     "utility":   ("utility", True),
-    "f2b":       ("fit_f2b", True),
-    "dive":      ("fit_dive", True),
+    "engage":    ("fit_engage", True),
     "poke":      ("fit_poke", True),
-    "pick":      ("fit_pick", True),
-    "split":     ("fit_split", True),
+    "protect":   ("fit_protect", True),
 }
 DRAFT_DEFAULT_SORT = "fit"
 
@@ -145,6 +142,7 @@ def role_icon_slug(role: str) -> str:
 
 app.jinja_env.globals["role_icon_slug"] = role_icon_slug
 app.jinja_env.globals["app_version"] = APP_VERSION
+app.jinja_env.globals["games_full_confidence"] = config.GAMES_FULL_CONFIDENCE
 
 
 def tier_label(tier: str) -> str:
@@ -267,12 +265,57 @@ def compute_comp_fits(a: dict) -> dict[str, float]:
     }
     mobility = a["mobility"] or 0
     control = a["control"] or 0
-    # Nudges: mobility+CC helps reach/lock the backline (dive), mobility is
-    # the split-pusher's escape, CC is what converts a catch (pick).
-    fits["dive"] += 0.05 * mobility + 0.05 * control
-    fits["pick"] += 0.05 * control
-    fits["split"] += 0.10 * mobility
+    # Nudges: mobility+CC helps reach and lock the target (engage); utility
+    # (shields/heals) is what keeps the carry alive (protect).
+    fits["engage"] += 0.05 * mobility + 0.05 * control
+    fits["protect"] += 0.05 * (a["utility"] or 0)
     return {c: min(1.0, max(0.0, v)) for c, v in fits.items()}
+
+
+def _derive_attr_fields(a: dict) -> dict:
+    """(Re)compute the fields derived from subclasses + ratings. Called for
+    every row at load and again for any per-game override patch."""
+    a["comp_fits"] = compute_comp_fits(a)
+    a["subclass_label"] = " · ".join(x.capitalize() for x in a["subclasses"])
+    top = sorted(a["comp_fits"].items(), key=lambda kv: kv[1], reverse=True)
+    a["comp_top"] = " · ".join(
+        f"{config.COMP_LABELS[c]} {v:.1f}" for c, v in top[:2] if v >= 0.4
+    )
+    return a
+
+
+_OVERRIDE_RATINGS = ("damage", "toughness", "control", "mobility", "utility")
+
+
+def apply_attr_overrides(attrs: dict[str, dict],
+                         overrides: dict) -> dict[str, dict]:
+    """User attribute overrides (the `attr_overrides` setting, a dict keyed
+    by champion name). Runes/items can flip a champion's effective profile —
+    tank Gragas vs full-AP assassin Gragas — so ratings, subclasses, and
+    adaptive type can all be overridden. Persisted in settings.json so they
+    survive games and app restarts. Returns a patched copy; the
+    process-cached base attrs are never mutated."""
+    patched = dict(attrs)
+    for name, ovr in overrides.items():
+        base = attrs.get(name)
+        if base is None or not isinstance(ovr, dict):
+            continue
+        a = dict(base)
+        for key in _OVERRIDE_RATINGS:
+            v = ovr.get(key)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                a[key] = max(0, min(3, int(v)))
+        subs = ovr.get("subclasses")
+        if isinstance(subs, list):
+            valid = [s for s in (str(x).upper() for x in subs)
+                     if s in config.SUBCLASS_COMP_FIT]
+            if valid:
+                a["subclasses"] = valid
+        if ovr.get("adaptive_type") in ("PHYSICAL_DAMAGE", "MAGIC_DAMAGE"):
+            a["adaptive_type"] = ovr["adaptive_type"]
+        a["overridden"] = True
+        patched[name] = _derive_attr_fields(a)
+    return patched
 
 
 _champion_attrs_cache: dict[str, dict] | None = None
@@ -296,13 +339,7 @@ def get_champion_attributes(conn) -> dict[str, dict]:
             # — subclasses are strictly more accurate, and the hybrid damping
             # in compute_comp_fits keys off the *subclass* count.
             a["subclasses"] = [x for x in a["roles"] if x in config.SUBCLASS_COMP_FIT]
-            a["comp_fits"] = compute_comp_fits(a)
-            a["subclass_label"] = " · ".join(x.capitalize() for x in a["subclasses"])
-            top = sorted(a["comp_fits"].items(), key=lambda kv: kv[1], reverse=True)
-            a["comp_top"] = " · ".join(
-                f"{config.COMP_LABELS[c]} {v:.1f}" for c, v in top[:2] if v >= 0.4
-            )
-            attrs[a["champion_name"]] = a
+            attrs[a["champion_name"]] = _derive_attr_fields(a)
         if not attrs:
             # Don't cache an empty table — if it gets populated later (e.g. a
             # manual fetch_attributes.py run after a failed startup fetch),
@@ -473,6 +510,9 @@ def get_champion_list(lane: str, tier: str, sort_param: str):
     and sort last."""
     with db.connect(config.DB_PATH) as conn:
         attrs = get_champion_attributes(conn)
+        user_overrides = config.get_setting("attr_overrides", {})
+        if isinstance(user_overrides, dict) and user_overrides:
+            attrs = apply_attr_overrides(attrs, user_overrides)
         if lane == LANE_ALL:
             names = {r["champion_name"] for r in conn.execute(
                 "SELECT DISTINCT champion_name FROM champion_stats WHERE tier = ?",
@@ -524,6 +564,17 @@ def _invert_winrate(winrate, matchup_type: str):
     if winrate is None:
         return None
     return (100.0 - winrate) if matchup_type == "counter" else winrate
+
+
+def _games_confidence(games) -> float:
+    """Sample-size confidence for a matchup's score contribution: 0 below the
+    MIN_MATCHUP_GAMES no-data floor, then a linear ramp games/GAMES_FULL_CONFIDENCE
+    capped at 1.0 — a 35-game winrate nudges the score, a 100+-game one counts
+    in full."""
+    g = games or 0
+    if g < config.MIN_MATCHUP_GAMES:
+        return 0.0
+    return min(1.0, g / config.GAMES_FULL_CONFIDENCE)
 
 
 def get_matchups(champion: str, lane: str, tier: str, matchup_type: str, min_games: int, sort_by: str):
@@ -762,13 +813,15 @@ def compute_draft_scores(
         for e_lane, e_name in enemy_team.items():
             mu = matchup_lookup.get((name, lane, e_name, e_lane, "counter"))
             weight = counter_w.get(e_lane, 0) / 100.0
-            if mu and mu.get("winrate") is not None and (mu.get("games") or 0) >= 30:
-                contrib = (mu["winrate"] - 50.0) * weight
+            conf = _games_confidence(mu.get("games")) if mu else 0.0
+            if mu and mu.get("winrate") is not None and conf > 0:
+                contrib = (mu["winrate"] - 50.0) * weight * conf
                 counter_contribs.append(contrib)
                 counter_breakdown.append({
                     "opponent": e_name, "lane": e_lane,
                     "winrate": mu["winrate"], "games": mu["games"],
                     "weight": weight, "contrib": contrib,
+                    "confidence": conf,
                     "inferred": mu.get("inferred", False),
                 })
             else:
@@ -785,13 +838,15 @@ def compute_draft_scores(
                 continue  # the active slot itself
             mu = matchup_lookup.get((name, lane, t_name, t_lane, "synergy"))
             weight = synergy_w.get(t_lane, 0) / 100.0
-            if mu and mu.get("winrate") is not None and (mu.get("games") or 0) >= 30:
-                contrib = (mu["winrate"] - 50.0) * weight
+            conf = _games_confidence(mu.get("games")) if mu else 0.0
+            if mu and mu.get("winrate") is not None and conf > 0:
+                contrib = (mu["winrate"] - 50.0) * weight * conf
                 synergy_contribs.append(contrib)
                 synergy_breakdown.append({
                     "ally": t_name, "lane": t_lane,
                     "winrate": mu["winrate"], "games": mu["games"],
                     "weight": weight, "contrib": contrib,
+                    "confidence": conf,
                     "inferred": mu.get("inferred", False),
                 })
             else:
@@ -873,13 +928,15 @@ def compute_pick_breakdown(
         weight = counter_w.get(opp_lane, 0) / 100.0
         wr = mu["winrate"] if mu else None
         games = mu["games"] if mu else None
-        if wr is not None and (games or 0) >= 30:
-            contrib = (wr - 50.0) * weight
+        conf = _games_confidence(games)
+        if wr is not None and conf > 0:
+            contrib = (wr - 50.0) * weight * conf
             counter_total += contrib
             counter_breakdown.append({
                 "opponent": opp_name, "lane": opp_lane,
                 "winrate": wr, "games": games,
                 "weight": weight, "contrib": contrib,
+                "confidence": conf,
                 "inferred": bool(mu and mu.get("inferred")),
             })
         else:
@@ -898,13 +955,15 @@ def compute_pick_breakdown(
         weight = synergy_w.get(ally_lane, 0) / 100.0
         wr = mu["winrate"] if mu else None
         games = mu["games"] if mu else None
-        if wr is not None and (games or 0) >= 30:
-            contrib = (wr - 50.0) * weight
+        conf = _games_confidence(games)
+        if wr is not None and conf > 0:
+            contrib = (wr - 50.0) * weight * conf
             synergy_total += contrib
             synergy_breakdown.append({
                 "ally": ally_name, "lane": ally_lane,
                 "winrate": wr, "games": games,
                 "weight": weight, "contrib": contrib,
+                "confidence": conf,
                 "inferred": bool(mu and mu.get("inferred")),
             })
         else:
@@ -967,6 +1026,29 @@ def api_settings():
     })
 
 
+@app.route("/api/overrides", methods=["POST"])
+def api_overrides():
+    """Update one champion's persistent attribute override. Body:
+    {"champion": "Gragas", "override": {...}} to set, or "override": null to
+    reset to the fetched attributes. Stored in settings.json (attr_overrides)
+    so it survives games and app restarts; values are sanitized on read by
+    apply_attr_overrides."""
+    data = request.get_json(silent=True) or {}
+    champ = (data.get("champion") or "").strip()
+    if not champ:
+        return jsonify({"error": "champion required"}), 400
+    overrides = config.get_setting("attr_overrides", {})
+    if not isinstance(overrides, dict):
+        overrides = {}
+    ovr = data.get("override")
+    if isinstance(ovr, dict) and ovr:
+        overrides[champ] = ovr
+    else:
+        overrides.pop(champ, None)
+    config.set_setting("attr_overrides", overrides if overrides else None)
+    return jsonify({"overrides": overrides})
+
+
 def team_avg_score(breakdowns: dict) -> float | None:
     """Average fit score across a team's filled slots. None when the team has no
     picks. `breakdowns` is the {pos: pick_breakdown} dict, whose values each
@@ -1010,6 +1092,13 @@ def draft():
     view = request.args.get("view") or "winrates"
     if view not in ("winrates", "attributes"):
         view = "winrates"
+
+    # Persistent attribute overrides (settings.json, edited via the per-slot
+    # ✎ editor → /api/overrides) — see apply_attr_overrides. They survive
+    # games and app restarts: "my friend always plays AP Gragas".
+    overrides = config.get_setting("attr_overrides", {})
+    if not isinstance(overrides, dict):
+        overrides = {}
     # LCU-detected bans split by team — drives the visual icon row under each
     # team; their union also drives scoring (excluded from candidates).
     my_bans_list = [b.strip() for b in (request.args.get("my_bans") or "").split(",") if b.strip()]
@@ -1030,6 +1119,8 @@ def draft():
         role_counts = get_role_counts(conn, tier)
         total_pr = get_total_pickrate(conn, tier)
         attrs = get_champion_attributes(conn)
+        if overrides:
+            attrs = apply_attr_overrides(attrs, overrides)
         # Comp alignment for the rec column: the manually selected comp when
         # one is chosen, otherwise scored against the drafting side's
         # *already-picked allies* (active slot excluded).
@@ -1094,6 +1185,7 @@ def draft():
             a = attrs.get(bk["champion_name"])
             bk["subclass_label"] = a["subclass_label"] if a else None
             bk["comp_top"] = a["comp_top"] if a else None
+            bk["attr"] = a  # full (possibly overridden) row for the slot line/editor
 
     # How each other picked champ moves the *active-slot* pick's score, so
     # the board can show — next to every other champ — the same contribution
@@ -1148,6 +1240,7 @@ def draft():
         enemy_comp_profile=enemy_comp_profile,
         comp_choice=comp_choice,
         view=view,
+        subclass_tags=sorted(config.SUBCLASS_COMP_FIT),
         comp_labels=config.COMP_LABELS,
         team_comps=config.TEAM_COMPS,
         my_pick_breakdowns=my_pick_breakdowns,
@@ -1200,9 +1293,9 @@ def champion_matchups(champion_name: str):
         matchup_type = "counter"
 
     try:
-        min_games = max(0, int(request.args.get("min_games", 30)))
+        min_games = max(0, int(request.args.get("min_games", config.MIN_MATCHUP_GAMES)))
     except ValueError:
-        min_games = 30
+        min_games = config.MIN_MATCHUP_GAMES
 
     sort_by = request.args.get("sort", "games")
     if sort_by not in MATCHUP_SORT_KEYS:
